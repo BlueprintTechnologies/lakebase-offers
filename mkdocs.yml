@@ -1,0 +1,92 @@
+site_name: The Lakebase Migration Playbook
+site_description: Blueprint's customer-facing reference for interpreting Lakebase readiness results, planning migration phases, and scaling adoption.
+site_url: https://blueprinttechnologies.github.io/lakebase-offers/
+repo_url: https://github.com/BlueprintTechnologies/lakebase-offers
+repo_name: BlueprintTechnologies/lakebase-offers
+
+theme:
+  name: material
+  logo: assets/images/blueprint-logo.png
+  favicon: assets/images/blueprint-logo.png
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: blue
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - content.code.copy
+
+plugins:
+  - search
+  - mermaid2
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Reading Your Assessment:
+    - Overview: reading-your-readout/index.md
+    - For Executives: reading-your-readout/executive.md
+    - For Data Owners: reading-your-readout/data-owner.md
+    - For Engineers: reading-your-readout/engineer.md
+  - Anatomy of Your Scorecard:
+    - Overview: scorecard-anatomy/index.md
+    - Pain — How Much Does It Hurt?: scorecard-anatomy/01-pain.md
+    - Business Impact — How Critical Is It?: scorecard-anatomy/02-business-impact.md
+    - Complexity — How Hard Is the Move?: scorecard-anatomy/03-complexity.md
+    - Critical Blockers: scorecard-anatomy/critical-blockers.md
+    - Workload Classifications: scorecard-anatomy/workload-classifications.md
+  - Migration Playbooks:
+    - Overview: migration-playbooks/index.md
+    - Analytics to Delta: migration-playbooks/analytics-to-delta.md
+    - Point Lookups + Cache: migration-playbooks/point-lookups.md
+    - App Backends: migration-playbooks/app-backends.md
+    - Agent State & Feature Serving: migration-playbooks/agent-state.md
+    - Real-time Aggregations: migration-playbooks/realtime-aggs.md
+    - Heavy ETL — Refactor First: migration-playbooks/heavy-etl.md
+  - Trust Foundations:
+    - Overview: trust-foundations/index.md
+    - Data Inventory & Schema Docs: trust-foundations/data-inventory.md
+    - Access Control Review: trust-foundations/access-control.md
+    - Data Quality Baseline: trust-foundations/data-quality.md
+    - Compliance & Governance: trust-foundations/compliance.md
+    - SQL Compatibility Check: trust-foundations/sql-compatibility.md
+  - After the Engagement:
+    - Overview: after-the-engagement/index.md
+    - 30/60/90 Day Plan: after-the-engagement/30-60-90.md
+    - Standing Up Your Migration Pod: after-the-engagement/migration-pod.md
+    - Measuring Migration Success: after-the-engagement/measuring-success.md
+    - Scaling to More Workloads: after-the-engagement/second-workload.md
+  - Databricks 101:
+    - Overview: databricks-101/index.md
+    - Lakebase SQL: databricks-101/lakebase-sql.md
+    - Unity Catalog: databricks-101/unity-catalog.md
+    - Delta Lake: databricks-101/delta-lake.md
+    - DBUs and Billing: databricks-101/dbus-and-billing.md
+    - Governed Tags: databricks-101/governed-tags.md
+  - Learning Paths:
+    - Overview: learning-paths/index.md
+    - Executive Sponsors: learning-paths/executive-sponsor.md
+    - Data Engineers: learning-paths/data-engineer.md
+    - Data Analysts: learning-paths/data-analyst.md
+    - Platform Admins: learning-paths/platform-admin.md
+  - Security and Compliance: security-and-compliance.md
+  - Glossary: glossary.md
+  - Troubleshooting: troubleshooting.md
+  - FAQ: faq.md
