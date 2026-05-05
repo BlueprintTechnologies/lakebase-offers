@@ -1,18 +1,100 @@
-# lakebase-assess
+# Offer: Lakebase Readiness in 2–3 Weeks
 
-**SQL-to-Databricks Lakebase Migration Assessment Engine**
+A fixed-scope, zero-cost engagement that answers: *Can we migrate to Lakebase, and how much will we save?*
 
-A frictionless, locally-executable tool that enables clients to discover their own SQL-to-Databricks Lakebase migration opportunities. Connects read-only to 10+ SQL platforms, computes a proprietary Lakebase Opportunity Score, estimates cost deltas, and outputs prioritized migration reports.
+Blueprint's **lakebase-assess** is the accelerator that powers this offer. It's a frictionless, locally-executable tool that enables customers to discover their own SQL-to-Databricks Lakebase migration opportunities without sharing billing data or PII.
 
-## Features
+## What You Get
 
-- **10+ Platform Connectors**: Snowflake, Redshift, BigQuery, Synapse, PostgreSQL, Oracle, Vertica, Teradata, on-prem CSV/JSON import
-- **Lakebase Opportunity Score**: Proprietary formula combining pain, business impact, and complexity
-- **Cost Delta Estimation**: Current platform vs. projected Lakebase costs without billing invoices
-- **Privacy-First**: 100% client-side, zero PII/billing data leakage, AES-256 encryption
-- **Rich Outputs**: Executive PDF, interactive HTML dashboard, JSON/CSV reports, migration checklist
-- **Optional BPCS Upload**: Anonymized trend tracking with `--upload`
-- **Offline-Ready**: All outputs generated without external network calls
+After running this assessor, customers receive:
+
+1. **Readiness Scorecard** — Per-workload opportunity scores (0–100) with priority buckets (Priority 1 / Evaluate / Hold)
+2. **Cost-Benefit Analysis** — Estimated annual savings by workload (typical: 30–60% of platform costs)
+3. **Migration Roadmap** — Phased approach with effort estimates, identified blockers, and PoC recommendations
+4. **Executive Summary** — One-page readout with top findings, top 3 PoC candidates, ROI, and timeline
+
+## The Assessment Tool (lakebase-assess)
+
+**10+ Platform Connectors**: Snowflake, Redshift, BigQuery, Synapse, PostgreSQL, Oracle, Vertica, Teradata, on-prem CSV/JSON import
+
+**Proprietary Scoring**: Pain × Business Impact / Complexity formula adjusted for savings — identifies which workloads should migrate first
+
+**Cost Modeling**: Current platform vs. projected Lakebase costs (drawn from query history, not billing invoices)
+
+**Privacy-First**: 100% client-side, zero PII/billing data leakage, AES-256 encryption, optional anonymized upload for BPCS trend tracking
+
+**Rich Outputs**: Executive PDF, interactive HTML dashboard, JSON/CSV reports, migration checklist — everything a customer needs to brief stakeholders and plan Phase 2
+
+**Offline-Ready**: All outputs generated without external network calls (unless `--upload` is explicitly enabled)
+
+## Engagement Shape
+
+Each Lakebase Readiness offer follows a 2–3 week timeline:
+
+| Week | Activities | Participants | Deliverables |
+| --- | --- | --- | --- |
+| **Week 1** | Kickoff; access provisioning; assessor runs; tech champion interview | Blueprint: 1 architect<br>Customer: data team lead, access owner | Draft scorecard, initial findings |
+| **Week 2** | Findings review with customer tech team; remediation prioritization; executive summary | Blueprint: architect + sales engineer<br>Customer: tech + business stakeholders | Executive summary, draft roadmap |
+| **Week 3** (optional) | Executive readout presentation; sales handoff to Free+ PoC offer | Blueprint: architect, sales lead<br>Customer: executive sponsors | Presentation deck, PoC proposal |
+
+## Repository Layout
+
+```
+lakebase-assess/
+├── src/
+│   ├── cli.py                    # CLI entrypoint (click)
+│   ├── config.py                 # YAML config loader, env vars, validation
+│   ├── connectors/               # 10+ platform connectors (read-only)
+│   │   ├── base.py               # AbstractBaseConnector
+│   │   ├── snowflake.py, redshift.py, bigquery.py, ...
+│   │   └── onprem_dump.py        # CSV/JSON import fallback
+│   ├── models/                   # Data models: queries, tables, concurrency, security
+│   ├── engine/
+│   │   ├── scoring.py            # Lakebase Opportunity Score formula
+│   │   ├── billing.py            # Platform pricing & cost delta calculation
+│   │   └── classifier.py         # Workload-to-Lakebase fit mapping (7 buckets)
+│   ├── outputs/
+│   │   ├── pdf_report.py         # Executive PDF generator
+│   │   ├── dashboard.py          # Plotly interactive HTML
+│   │   ├── json_export.py        # JSON/CSV export
+│   │   └── checklist.py          # Migration implementation checklist
+│   └── security/
+│       ├── encryption.py         # AES-256 local storage
+│       └── privacy.py            # PII masking, query filtering
+├── pricing_maps/
+│   ├── platform_rates.yaml       # Compute/storage/IO rates for all platforms
+│   └── dbu_mapping.yaml          # Lakebase DBU tier mappings
+├── templates/
+│   ├── executive_report.md.j2    # PDF report template
+│   └── checklist.md.j2           # Migration checklist template
+├── tests/                        # Unit & integration tests
+├── pyproject.toml
+├── Dockerfile                    # For containerized execution
+└── README.md                     # ← You are here
+```
+
+## Running the Assessment
+
+### Blueprint Internal Path (Development)
+
+```bash
+cd lakebase-assess
+pip install -e .
+lakebase-assess run --config ../config.yaml --output-dir ./results
+```
+
+### Customer Path (Self-Service)
+
+The customer installs the CLI and runs the assessment against their platform:
+
+```bash
+pip install lakebase-assess  # or docker pull lakebase-assess:latest
+lakebase-assess run --config my-assessment.yaml --output-dir ./my-results --anonymize
+```
+
+Results are generated locally; no data leaves the customer's environment (unless `--upload --anonymize` is explicitly enabled for BPCS trend tracking).
+
+For full details, see [../ACCELERATOR.md](../ACCELERATOR.md).
 
 ## Installation
 
@@ -240,6 +322,46 @@ lakebase-assess/
 └── README.md
 ```
 
+## See Also
+
+### Customer-Facing Resources
+
+- **[The Lakebase Migration Playbook](../docs/index.md)** — Role-based guides (executives, data owners, engineers) for interpreting assessment results and planning migration phases
+- **[ACCELERATOR.md](../ACCELERATOR.md)** — Full setup guide for running the assessor: platform configs, CLI reference, troubleshooting
+
+### Internal Blueprint Resources
+
+- **[Lakebase Offers GTM Hub](https://github.com/BlueprintTechnologies/lakebase-offers#)** — Sales positioning, offer structure, pricing
+- **Private Obsidian Docs** (internal only):
+  - Billing calculator details & pricing maps
+  - Opportunity scoring formula & tuning
+  - 7 proven migration use cases
+  - Free/Free+/Phase 2 offer terms
+  - CIO/CFO/engineer sales scripts
+  - BPCS aggregation & trend analysis
+
+### Preview the Customer Playbook Locally
+
+The customer playbook is in `../docs/` and uses **mkdocs** for publishing. To preview locally:
+
+```bash
+cd ..  # go to lakebase-offers/ root
+pip install -r docs-requirements.txt
+mkdocs serve
+# Open http://localhost:8000 in your browser
+```
+
+Changes to `docs/**/*.md` are automatically published to GitHub Pages on push to `main`.
+
+### Databricks References
+
+- **[Databricks Lakebase SQL Docs](https://docs.databricks.com/en/sql/index.html)** — Official Databricks SQL/Lakebase documentation
+- **[SQL Migration Guide](https://docs.databricks.com/en/sql/migration/index.html)** — Snowflake, BigQuery, Redshift to Databricks
+- **[Unity Catalog](https://docs.databricks.com/en/data-governance/unity-catalog/index.html)** — Data governance, security, access control
+- **[Databricks Glossary](https://docs.databricks.com/en/glossary/index.html)** — Key terms (Lakehouse, Delta Lake, Lakebase, etc.)
+
 ## License
 
-MIT
+Blueprint Business Source License (BSL) 1.1
+
+See [../LICENSE.md](../LICENSE.md) for full details. This code is source-available for internal evaluation and migration assessment, but **not open-source** — commercial use, white-labeling, and SaaS hosting are prohibited.
