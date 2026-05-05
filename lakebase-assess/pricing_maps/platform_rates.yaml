@@ -1,0 +1,93 @@
+# Platform pricing rates for cost delta calculation
+# All rates in USD
+# Format: platform → {base_compute, compute_unit, storage, storage_unit, io, io_unit, scaling, scaling_condition}
+
+platform_rates:
+  snowflake:
+    base_compute: 28.0
+    compute_unit: "credit"
+    storage: 0.023
+    storage_unit: "GB/mo"
+    io: 0.000005
+    io_unit: "MB"
+    scaling: 0.3
+    scaling_condition: "concurrency > 50"
+
+  redshift:
+    base_compute: 0.25
+    compute_unit: "node-hr"
+    storage: 0.024
+    storage_unit: "GB/mo"
+    io: 0.000001
+    io_unit: "MB"
+    scaling: 0.2
+    scaling_condition: "ra3/managed"
+
+  bigquery:
+    base_compute: 0.0
+    compute_unit: "compute_free"
+    storage: 0.02
+    storage_unit: "GB/mo"
+    io: 0.000002
+    io_unit: "MB"
+    scaling: 0.25
+    scaling_condition: "BI Engine"
+
+  synapse:
+    base_compute: 0.42
+    compute_unit: "DWU-hr"
+    storage: 0.015
+    storage_unit: "GB/mo"
+    io: 0.000001
+    io_unit: "MB"
+    scaling: 0.15
+    scaling_condition: "dedicated"
+
+  oracle:
+    base_compute: 0.0028
+    compute_unit: "core-hr (amortized)"
+    storage: 0.035
+    storage_unit: "GB/mo"
+    io: 0.0000008
+    io_unit: "MB"
+    scaling: 0.4
+    scaling_condition: "HA/DR"
+
+  vertica:
+    base_compute: 0.0028
+    compute_unit: "core-hr (amortized)"
+    storage: 0.035
+    storage_unit: "GB/mo"
+    io: 0.0000008
+    io_unit: "MB"
+    scaling: 0.4
+    scaling_condition: "HA/DR"
+
+  teradata:
+    base_compute: 0.0028
+    compute_unit: "core-hr (amortized)"
+    storage: 0.035
+    storage_unit: "GB/mo"
+    io: 0.0000008
+    io_unit: "MB"
+    scaling: 0.4
+    scaling_condition: "HA/DR"
+
+  databricks_sql:
+    base_compute: 0.072
+    compute_unit: "DBU"
+    storage: 0.04
+    storage_unit: "GB/mo"
+    io: 0.0
+    io_unit: "N/A"
+    scaling: 0.0
+    scaling_condition: "none"
+
+# Lakebase (Databricks SQL) projected rates
+lakebase_projected:
+  compute_dbu: 0.06
+  storage: 0.04
+  storage_unit: "GB/mo"
+  query_cost: 0.005
+  query_cost_unit: "per_query"
+  efficiency_gain_pct: 0.30

@@ -1,0 +1,71 @@
+# DBU (Databricks Unit) mapping for compute tier pricing
+
+# Databricks SQL compute tiers → DBU pricing
+sql_compute_tiers:
+  micro:
+    dbu_price: 0.04
+    dtu: 16
+    description: "Micro warehouse (16 DTU)"
+  small:
+    dbu_price: 0.06
+    dtu: 256
+    description: "Small warehouse (256 DTU)"
+  medium:
+    dbu_price: 0.12
+    dtu: 1024
+    description: "Medium warehouse (1024 DTU)"
+  large:
+    dbu_price: 0.24
+    dtu: 4096
+    description: "Large warehouse (4096 DTU)"
+  xlarge:
+    dbu_price: 0.48
+    dtu: 16384
+    description: "XLarge warehouse (16384 DTU)"
+  2xlarge:
+    dbu_price: 0.96
+    dtu: 65536
+    description: "2XLarge warehouse (65536 DTU)"
+  4xlarge:
+    dbu_price: 1.92
+    dtu: 262144
+    description: "4XLarge warehouse (262144 DTU)"
+
+# Snowflake credits → DBU equivalent
+snowflake_to_dbu:
+  XSmall: 0.5
+  Small: 1.0
+  Medium: 2.0
+  Large: 4.0
+  XLarge: 8.0
+  2XLarge: 16.0
+  3XLarge: 32.0
+  4XLarge: 64.0
+
+# Redshift nodes → DBU equivalent
+redshift_to_dbu:
+  dc2_large: 0.25
+  dc2_8xlarge: 2.0
+  ds2_large: 0.5
+  ds2_8xlarge: 4.0
+  ra3_node: 0.42
+  ra3_xlplus: 4.0
+
+# BigQuery slots → DBU equivalent (approximate)
+bigquery_to_dbu:
+  per_slot_hour: 0.05
+  slot_multiplier: 0.001
+
+# Synapse DWU → DBU equivalent
+synapse_to_dbu:
+  dw100: 0.02
+  dw200: 0.04
+  dw300: 0.06
+  dw1000: 0.12
+  dw2000: 0.24
+  dw3000: 0.36
+  dw5000: 0.6
+  dw6000: 0.72
+  dw7500: 0.9
+  dw10000: 1.2
+  dw15000: 1.8
