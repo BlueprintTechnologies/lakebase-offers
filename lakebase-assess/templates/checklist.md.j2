@@ -1,0 +1,28 @@
+# Migration Implementation Checklist
+
+**Platform:** {{ platform_name }}
+**Generated:** {{ generated_at }}
+
+---
+
+## Priority Items
+
+{% for item in priority_items %}
+- [ ] **{{ item.identifier }}** — Score: {{ item.adjusted_score|round(1) }}
+{% endfor %}
+
+---
+
+## Platform-Specific Steps
+
+{% for step in platform_steps %}
+- [ ] {{ step }}
+{% endfor %}
+
+---
+
+## Validation Steps
+
+{% for step in validation_steps %}
+- [ ] {{ step }}
+{% endfor %}

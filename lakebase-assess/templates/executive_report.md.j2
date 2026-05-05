@@ -1,0 +1,61 @@
+# Lakebase Migration Assessment Report
+
+**Generated:** {{ generated_at }}
+
+---
+
+## Executive Summary
+
+{% for platform, scores in scores.items() %}
+### {{ platform }}
+
+| Metric | Value |
+|--------|-------|
+| Total Workloads | {{ scores|length }} |
+| Priority 1 | {{ scores|selectattr('priority', 'equalto', 'Priority_1')|list|length }} |
+| Evaluate | {{ scores|selectattr('priority', 'equalto', 'Evaluate')|list|length }} |
+| Hold | {{ scores|selectattr('priority', 'equalto', 'Hold')|list|length }} |
+| Average Score | {{ scores|map(attribute='adjusted_score')|average|round(1) }} |
+
+{% endfor %}
+
+---
+
+## Cost Comparison
+
+| Platform | Current ($/mo) | Projected ($/mo) | Savings (%) |
+|----------|---------------|-----------------|-------------|
+{% for platform, delta in cost_deltas.items() %}
+| {{ delta.platform }} | ${{ delta.current_estimated_monthly_cost|round(2) }} | ${{ delta.projected_lakebase_cost|round(2) }} | {{ delta.savings_pct|round(1) }}% |
+{% endfor %}
+
+---
+
+## Migration Buckets
+
+{% for bucket, items in buckets.items() %}
+### {{ bucket }}
+
+{% for item in items %}
+- [ ] `{{ item.identifier }}` (score: {{ item.adjusted_score|round(1) }})
+{% endfor %}
+
+{% endfor %}
+
+---
+
+## Implementation Checklist
+
+### Pre-Migration
+- [ ] Review data governance policies
+- [ ] Verify network connectivity to Databricks workspace
+- [ ] Set up Databricks SQL warehouse
+- [ ] Configure Delta Lake storage
+- [ ] Test query parity
+
+### Post-Migration
+- [ ] Verify query results
+- [ ] Measure latency improvement
+- [ ] Validate cost savings
+- [ ] Update monitoring
+- [ ] Decommission legacy infrastructure
