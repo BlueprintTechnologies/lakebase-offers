@@ -57,10 +57,10 @@ class TestBillingCalculator:
         assert rates["io"] == 0.0
 
     def test_calculate_cost_delta_snowflake(self):
-        """Test cost delta calculation for Snowflake."""
+        """Test cost delta calculation for Snowflake using score-based fallback."""
         calc = BillingCalculator()
         scores = [_make_score(raw_score=50.0) for _ in range(5)]
-        delta = calc.calculate_cost_delta("snowflake", "Snowflake", scores)
+        delta = calc.calculate_cost_delta("snowflake", "Snowflake", scores=scores)
 
         assert "current_estimated_monthly_cost" in delta
         assert "projected_lakebase_cost" in delta
@@ -73,13 +73,13 @@ class TestBillingCalculator:
         """Test that savings_pct is computed."""
         calc = BillingCalculator()
         scores = [_make_score(raw_score=100.0) for _ in range(10)]
-        delta = calc.calculate_cost_delta("snowflake", "Snowflake", scores)
+        delta = calc.calculate_cost_delta("snowflake", "Snowflake", scores=scores)
         assert "savings_pct" in delta
 
     def test_cost_delta_zero_scores(self):
         """Test cost delta with zero/empty scores (baseline costs)."""
         calc = BillingCalculator()
-        delta = calc.calculate_cost_delta("snowflake", "Snowflake", [])
+        delta = calc.calculate_cost_delta("snowflake", "Snowflake", scores=[])
         assert delta["current_estimated_monthly_cost"] > 0  # Baseline kicks in
         assert delta["projected_lakebase_cost"] > 0
 
@@ -138,7 +138,7 @@ class TestBillingCalculator:
         """Test efficiency gain sub-metrics."""
         calc = BillingCalculator()
         scores = [_make_score(raw_score=100.0) for _ in range(10)]
-        delta = calc.calculate_cost_delta("snowflake", "Snowflake", scores)
+        delta = calc.calculate_cost_delta("snowflake", "Snowflake", scores=scores)
         eff = delta["efficiency_gain"]
         assert "compute_hours_saved" in eff
         assert "cost_per_query_current" in eff
@@ -150,7 +150,7 @@ class TestBillingCalculator:
         """Test BigQuery cost delta (compute is free)."""
         calc = BillingCalculator()
         scores = [_make_score(raw_score=50.0) for _ in range(5)]
-        delta = calc.calculate_cost_delta("bigquery", "BigQuery", scores)
+        delta = calc.calculate_cost_delta("bigquery", "BigQuery", scores=scores)
         # BigQuery has zero base compute, so current cost should be lower
         assert delta["current_estimated_monthly_cost"] > 0
 

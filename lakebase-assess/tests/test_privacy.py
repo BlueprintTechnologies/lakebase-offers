@@ -207,8 +207,7 @@ class TestSanitizePayload:
         for q in sanitized.query_history.queries:
             assert "test@example.com" not in q.query_text_fingerprint
             assert "123-45-6789" not in q.query_text_fingerprint
-            assert "[EMAIL]" in q.query_text_fingerprint
-            assert "[SSN]" in q.query_text_fingerprint
+            assert "[REDACTED]" in q.query_text_fingerprint
 
     def test_sanitize_truncates_long_text(self):
         """Test that PII sanitization truncates very long text."""
