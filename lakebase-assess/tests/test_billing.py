@@ -160,3 +160,68 @@ class TestBillingCalculator:
         rates = calc.get_rates_for_platform("synapse")
         assert rates["base_compute"] == 0.42
         assert rates["compute_unit"] == "DWU-hr"
+
+
+class TestBillingWithCostSignals:
+    """Test BillingCalculator with actual CostSignals (item 4)."""
+
+    def test_cost_delta_with_real_cost_signals(self):
+        """Test cost delta calculation with CostSignals produces real values."""
+        from src.models.cost_signals import CostSignals
+
+        signals = CostSignals(
+            platform="snowflake",
+            compute_units_per_month=100.0,
+            compute_unit_name="credit",
+            compute_cost_per_unit=28.0,
+            estimated_compute_cost_monthly=2800.0,
+            storage_gb_total=500.0,
+            storage_cost_per_gb=0.023,
+            estimated_storage_cost_monthly=11.5,
+            bytes_scanned_per_month=1000.0 * 1024 * 1024,
+            io_cost_per_mb=0.000005,
+            estimated_io_cost_monthly=0.005,
+            total_estimated_monthly_cost=2811.505,
+            costs_from_billing_api=True,
+        )
+        calc = BillingCalculator()
+        delta = calc.calculate_cost_delta("snowflake", "Snowflake", cost_signals=signals)
+
+        assert delta["current_estimated_monthly_cost"] == 2811.51
+        assert delta["cost_data_source"] == "actual_signals"
+        assert delta["projected_lakebase_cost"] > 0
+        assert "savings_pct" in delta
+
+    def test_cost_delta_falls_back_to_proxy_when_no_signals(self):
+        """Test that billing falls back to proxy estimates when no CostSignals."""
+        calc = BillingCalculator()
+        scores = [_make_score(raw_score=50.0) for _ in range(5)]
+        delta = calc.calculate_cost_delta("snowflake", "Snowflake", cost_signals=None, scores=scores)
+
+        assert delta["cost_data_source"] == "proxy_estimates"
+        assert delta["current_estimated_monthly_cost"] > 0
+
+    def test_cost_delta_with_license_savings(self):
+        """Test that Oracle license costs are factored into savings."""
+        from src.models.cost_signals import CostSignals
+
+        signals = CostSignals(
+            platform="oracle",
+            compute_units_per_month=2920.0,
+            compute_unit_name="core-hr (amortized)",
+            compute_cost_per_unit=2.0,
+            estimated_compute_cost_monthly=5840.0,
+            storage_gb_total=100.0,
+            storage_cost_per_gb=0.035,
+            estimated_storage_cost_monthly=3.5,
+            has_license_cost=True,
+            estimated_license_cost_monthly=833.33,
+            total_estimated_monthly_cost=6676.83,
+            costs_from_billing_api=False,
+        )
+        calc = BillingCalculator()
+        delta = calc.calculate_cost_delta("oracle", "Oracle", cost_signals=signals)
+
+        # Lakebase should save the license cost
+        assert delta["projected_lakebase_cost"] < delta["current_estimated_monthly_cost"]
+        assert delta["savings_pct"] > 0

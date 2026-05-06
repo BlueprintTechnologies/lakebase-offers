@@ -6,6 +6,7 @@ from typing import Any
 
 from src.connectors.base import AbstractBaseConnector
 from src.models.concurrency import ConcurrencySignals, ConcurrencySnapshot
+from src.models.cost_signals import CostSignals
 from src.models.query_history import QueryHistory, QueryRecord
 from src.models.security import SecurityFinding, SecurityPatterns
 from src.models.table_metadata import TableMetadata, TableMetadataCollection
@@ -207,6 +208,55 @@ class BigQueryConnector(AbstractBaseConnector):
             peak_concurrent_queries=0,
             scaling_pressure="low",
         )
+
+    def fetch_cost_signals(self) -> CostSignals:
+        """Estimate BigQuery costs from INFORMATION_SCHEMA.JOBS_BY_PROJECT."""
+        from google.cloud import bigquery
+        project = self._kwargs.get("bq_project_id", "")
+        client = bigquery.Client(project=project)
+
+        cost = CostSignals(platform="bigquery")
+
+        # Get total bytes billed last month
+        sql = f"""
+        SELECT SUM(total_bytes_billed) / 1024 / 1024 / 1024 AS total_tb_tb
+        FROM `{project}.region-us.INFORMATION_SCHEMA.JOBS_BY_PROJECT`
+        WHERE creation_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
+        """
+        job = client.query(sql)
+        result = list(job.result())[0]
+        tb_processed = float(result[0] or 0)
+        gb_scanned = tb_processed * 1000
+
+        # BigQuery pricing: $6.25/TB for first 1TB/month, then tiered
+        io_cost = 0.0
+        if gb_scanned <= 1024:
+            io_cost = gb_scanned / 1024 * 6.25  # $6.25/TB
+        else:
+            io_cost = 6.25 + (gb_scanned - 1024) / 1024 * 5.0
+
+        # Storage cost
+        datasets = client.list_datasets()
+        total_storage_gb = 0.0
+        for ds in datasets:
+            for tbl in client.list_tables(ds.dataset_id):
+                tbl_ref = client.get_table(tbl.reference)
+                total_storage_gb += (tbl_ref.num_bytes or 0) / 1024 / 1024 / 1024
+
+        cost.compute_units_per_month = gb_scanned / 1000  # TB
+        cost.compute_unit_name = "TB processed"
+        cost.compute_cost_per_unit = 0.0  # BigQuery is compute-free (pay-per-query)
+        cost.estimated_compute_cost_monthly = 0.0
+        cost.storage_gb_total = total_storage_gb
+        cost.storage_cost_per_gb = 0.02
+        cost.estimated_storage_cost_monthly = total_storage_gb * 0.02
+        cost.bytes_scanned_per_month = gb_scanned * 1024 * 1024 * 1000  # bytes (TB->GB->bytes)
+        cost.io_cost_per_mb = 0.00625 / 1024  # $6.25/TB -> per MB
+        cost.estimated_io_cost_monthly = io_cost
+        cost.total_estimated_monthly_cost = cost.estimated_storage_cost_monthly + io_cost
+        cost.costs_from_billing_api = True
+
+        return cost
 
     def fetch_security_patterns(self) -> SecurityPatterns:
         findings: list[SecurityFinding] = []

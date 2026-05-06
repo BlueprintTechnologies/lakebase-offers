@@ -72,11 +72,13 @@ def run(
 
     # Phase 1: Data ingestion via connectors
     scores: dict[str, dict] = {}
+    payloads: dict[str, Any] = {}
     for platform in cfg.target_platforms:
         click.echo(f"\n  [{1 + list(cfg.target_platforms).index(platform)}/{len(cfg.target_platforms)}] Ingesting data from {platform}...")
         try:
             connector = cfg.get_connector(platform)
             payload = connector.ingest_all()
+            payloads[platform] = payload
             click.echo(click.style(f"    Ingested {len(payload.query_history)} queries, {len(payload.table_metadata)} tables.", fg="green"))
         except Exception as e:
             click.echo(click.style(f"    Failed to connect to {platform}: {e}", fg="red"))
@@ -99,8 +101,10 @@ def run(
     for platform, results in scores.items():
         click.echo(f"\n  Estimating costs for {platform}...")
         try:
-            connector = cfg.get_connector(platform)
-            delta = billing.calculate_cost_delta(platform, connector.platform_display_name, results)
+            payload = payloads.get(platform)
+            cost_signals = payload.cost_signals if payload else None
+            display = payload.platform_display_name if payload else platform
+            delta = billing.calculate_cost_delta(platform, display, cost_signals, results)
             cost_deltas[platform] = delta
             click.echo(click.style(f"    Current est.: ${delta['current_estimated_monthly_cost']:,.2f}/mo  |  "
                                    f"Projected: ${delta['projected_lakebase_cost']:,.2f}/mo  |  "

@@ -9,7 +9,10 @@ from src.models.assessment_payload import AssessmentPayload
 from src.models.query_history import QueryHistory, QueryRecord
 from src.models.table_metadata import TableMetadataCollection
 from src.models.concurrency import ConcurrencySignals
+from src.models.cost_signals import CostSignals
 from src.models.security import SecurityPatterns
+from src.models.access_patterns import AccessPatternSignals
+from src.models.migration_complexity import MigrationComplexitySignals
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +60,19 @@ class AbstractBaseConnector(abc.ABC):
         """Fetch security and compliance patterns."""
         ...
 
+    @abc.abstractmethod
+    def fetch_cost_signals(self) -> CostSignals:
+        """Fetch actual usage/cost data for the platform."""
+        ...
+
+    def fetch_access_patterns(self) -> AccessPatternSignals | None:
+        """Analyze access patterns (cache candidates, temporal buckets). Override to implement."""
+        return None
+
+    def fetch_migration_complexity(self) -> MigrationComplexitySignals | None:
+        """Analyze migration complexity (UDFs, procs, binary types). Override to implement."""
+        return None
+
     def ingest_all(self) -> AssessmentPayload:
         """Run full ingestion pipeline and return a validated AssessmentPayload."""
         # Validate first
@@ -66,6 +82,11 @@ class AbstractBaseConnector(abc.ABC):
         tm = self.fetch_table_metadata()
         cs = self.fetch_concurrency_signals()
         sp = self.fetch_security_patterns()
+        cost = self.fetch_cost_signals()
+
+        # Optional signals
+        access = self.fetch_access_patterns()
+        complexity = self.fetch_migration_complexity()
 
         payload = AssessmentPayload(
             platform=self.platform_name,
@@ -74,6 +95,9 @@ class AbstractBaseConnector(abc.ABC):
             table_metadata=tm,
             concurrency_signals=cs,
             security_patterns=sp,
+            cost_signals=cost,
+            access_patterns=access,
+            migration_complexity=complexity,
         )
 
         # Validate the full payload

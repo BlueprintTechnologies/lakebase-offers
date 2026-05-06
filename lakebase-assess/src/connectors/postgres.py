@@ -6,6 +6,7 @@ from typing import Any
 
 from src.connectors.base import AbstractBaseConnector
 from src.models.concurrency import ConcurrencySignals, ConcurrencySnapshot
+from src.models.cost_signals import CostSignals
 from src.models.query_history import QueryHistory, QueryRecord
 from src.models.security import SecurityFinding, SecurityPatterns
 from src.models.table_metadata import TableMetadata, TableMetadataCollection
@@ -238,6 +239,68 @@ class PostgresConnector(AbstractBaseConnector):
             peak_concurrent_queries=active,
             scaling_pressure="medium" if active > 10 else "low",
         )
+
+    def fetch_cost_signals(self) -> CostSignals:
+        """Estimate PostgreSQL costs from pg_size_pretty + hosting."""
+        import psycopg2
+
+        conn_kwargs = {
+            "dbname": self._kwargs.get("pg_database", "postgres"),
+            "user": self._kwargs.get("pg_user", ""),
+            "host": self._kwargs.get("pg_host", ""),
+            "port": int(self._kwargs.get("pg_port", 5432)),
+        }
+        pw = self._kwargs.get("pg_password")
+        if pw:
+            conn_kwargs["password"] = pw
+
+        conn = psycopg2.connect(**conn_kwargs)
+        cur = conn.cursor()
+
+        cost = CostSignals(platform="postgres")
+
+        # Get total database size
+        cur.execute("SELECT pg_size_pretty(pg_database_size(current_database()))")
+        size_pretty = cur.fetchone()[0] or "1 GB"
+        # Extract GB (approximate)
+        import re
+        match = re.search(r"([\d.]+)\s*(GB|TB|MB|KB)", size_pretty)
+        storage_gb = 1.0
+        if match:
+            val = float(match.group(1))
+            unit = match.group(2)
+            if unit == "TB":
+                storage_gb = val * 1024
+            elif unit == "GB":
+                storage_gb = val
+            elif unit == "MB":
+                storage_gb = val / 1024
+            elif unit == "KB":
+                storage_gb = val / 1024 / 1024
+
+        # Postgres doesn't have billing API — estimate from hosting
+        is_cloud = any(host in str(self._kwargs.get("pg_host", "")) for host in ("rds", "azure", "google", "aws"))
+        if is_cloud:
+            compute_cost_monthly = storage_gb * 0.1 + 100.0  # base RDS cost
+        else:
+            compute_cost_monthly = storage_gb * 0.01 + 200.0  # self-hosted VM
+
+        conn.close()
+
+        cost.compute_units_per_month = 0.0
+        cost.compute_unit_name = "N/A (estimated)"
+        cost.compute_cost_per_unit = 0.0
+        cost.estimated_compute_cost_monthly = compute_cost_monthly
+        cost.storage_gb_total = storage_gb
+        cost.storage_cost_per_gb = 0.02
+        cost.estimated_storage_cost_monthly = storage_gb * 0.02
+        cost.bytes_scanned_per_month = 0.0
+        cost.io_cost_per_mb = 0.000001
+        cost.estimated_io_cost_monthly = 0.0
+        cost.total_estimated_monthly_cost = compute_cost_monthly + storage_gb * 0.02
+        cost.costs_from_billing_api = False
+
+        return cost
 
     def fetch_security_patterns(self) -> SecurityPatterns:
         return SecurityPatterns(

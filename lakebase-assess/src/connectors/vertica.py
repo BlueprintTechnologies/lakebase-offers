@@ -6,6 +6,7 @@ from typing import Any
 
 from src.connectors.base import AbstractBaseConnector
 from src.models.concurrency import ConcurrencySignals, ConcurrencySnapshot
+from src.models.cost_signals import CostSignals
 from src.models.query_history import QueryHistory, QueryRecord
 from src.models.security import SecurityFinding, SecurityPatterns
 from src.models.table_metadata import TableMetadata, TableMetadataCollection
@@ -248,6 +249,52 @@ class VerticaConnector(AbstractBaseConnector):
             peak_concurrent_queries=active,
             scaling_pressure="high" if active > 50 else "medium" if active > 10 else "low",
         )
+
+    def fetch_cost_signals(self) -> CostSignals:
+        """Estimate Vertica costs from storage + on-prem baseline."""
+        import vertica_python
+
+        conn_kwargs = {
+            "host": self._kwargs.get("vertica_host", ""),
+            "port": int(self._kwargs.get("vertica_port", 5433)),
+            "username": self._kwargs.get("vertica_user", ""),
+            "password": self._kwargs.get("vertica_password", ""),
+            "database": self._kwargs.get("vertica_database", "demo"),
+        }
+        conn = vertica_python.connect(**conn_kwargs)
+        cur = conn.cursor()
+
+        cost = CostSignals(platform="vertica")
+
+        try:
+            cur.execute("SELECT SUM(table_size) / 1024 / 1024 / 1024 FROM v_catalog.tables")
+            storage_gb = float(cur.fetchone()[0] or 0)
+        except Exception:
+            storage_gb = 100.0
+
+        # On-prem estimate: VM cost + storage
+        compute_cost_monthly = 500.0  # baseline VM
+        license_cost = 0.0
+        license_type = "unknown"
+
+        conn.close()
+
+        cost.compute_units_per_month = 0.0
+        cost.compute_unit_name = "N/A (estimated)"
+        cost.compute_cost_per_unit = 0.0
+        cost.estimated_compute_cost_monthly = compute_cost_monthly
+        cost.storage_gb_total = storage_gb
+        cost.storage_cost_per_gb = 0.035
+        cost.estimated_storage_cost_monthly = storage_gb * 0.035
+        cost.bytes_scanned_per_month = 0.0
+        cost.io_cost_per_mb = 0.0000008
+        cost.estimated_io_cost_monthly = 0.0
+        cost.estimated_license_cost_monthly = license_cost
+        cost.license_type = license_type
+        cost.total_estimated_monthly_cost = compute_cost_monthly + storage_gb * 0.035 + license_cost
+        cost.costs_from_billing_api = False
+
+        return cost
 
     def fetch_security_patterns(self) -> SecurityPatterns:
         return SecurityPatterns(

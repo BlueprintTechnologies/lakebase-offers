@@ -12,6 +12,8 @@ from src.connectors.oracle import OracleConnector
 from src.connectors.vertica import VerticaConnector
 from src.connectors.teradata import TeradataConnector
 from src.connectors.onprem_dump import OnPremDumpConnector
+from src.connectors.mysql import MySQLConnector
+from src.connectors.databricks import DatabricksConnector
 
 
 class TestBaseConnector:
@@ -78,6 +80,8 @@ class TestConnectorRegistry:
         assert VerticaConnector is not None
         assert TeradataConnector is not None
         assert OnPremDumpConnector is not None
+        assert MySQLConnector is not None
+        assert DatabricksConnector is not None
 
     def test_connector_platform_names(self):
         """Test that all connectors have correct platform names."""
@@ -90,6 +94,8 @@ class TestConnectorRegistry:
         assert VerticaConnector.platform_name == "vertica"
         assert TeradataConnector.platform_name == "teradata"
         assert OnPremDumpConnector.platform_name == "onprem_dump"
+        assert MySQLConnector.platform_name == "mysql"
+        assert DatabricksConnector.platform_name == "databricks"
 
     def test_connector_repr(self):
         """Test connector string representation."""
@@ -191,5 +197,17 @@ class TestConnectorCredentialValidation:
     def test_teradata_requires_host_and_user(self):
         """Test Teradata requires HOST and USER."""
         conn = TeradataConnector()
+        with pytest.raises(ValueError):
+            conn.validate_credentials()
+
+    def test_mysql_requires_host_and_user(self):
+        """Test MySQL requires HOST and USER."""
+        conn = MySQLConnector()
+        with pytest.raises(ValueError):
+            conn.validate_credentials()
+
+    def test_databricks_requires_host_and_token(self):
+        """Test Databricks requires HOST and TOKEN."""
+        conn = DatabricksConnector()
         with pytest.raises(ValueError):
             conn.validate_credentials()

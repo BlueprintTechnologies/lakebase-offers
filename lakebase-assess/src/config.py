@@ -17,6 +17,8 @@ from src.connectors.oracle import OracleConnector
 from src.connectors.vertica import VerticaConnector
 from src.connectors.teradata import TeradataConnector
 from src.connectors.onprem_dump import OnPremDumpConnector
+from src.connectors.mysql import MySQLConnector
+from src.connectors.databricks import DatabricksConnector
 
 
 PLATFORM_CONNECTOR_MAP = {
@@ -29,6 +31,8 @@ PLATFORM_CONNECTOR_MAP = {
     "vertica": VerticaConnector,
     "teradata": TeradataConnector,
     "onprem_dump": OnPremDumpConnector,
+    "mysql": MySQLConnector,
+    "databricks": DatabricksConnector,
 }
 
 
@@ -120,6 +124,17 @@ class AssessmentConfig:
             "teradata_port": int(env.get("TERADATA_PORT", "1025")),
             "teradata_user": env.get("TERADATA_USER"),
             "teradata_password": env.get("TERADATA_PASSWORD"),
+            "mysql_host": env.get("MYSQL_HOST"),
+            "mysql_port": int(env.get("MYSQL_PORT", "3306")),
+            "mysql_user": env.get("MYSQL_USER"),
+            "mysql_password": env.get("MYSQL_PASSWORD"),
+            "mysql_database": env.get("MYSQL_DATABASE"),
+            "mysql_ssl_ca": env.get("MYSQL_SSL_CA"),
+            "mysql_ssl_cert": env.get("MYSQL_SSL_CERT"),
+            "mysql_ssl_key": env.get("MYSQL_SSL_KEY"),
+            "databricks_host": env.get("DATABRICKS_HOST"),
+            "databricks_token": env.get("DATABRICKS_TOKEN"),
+            "databricks_warehouse_id": env.get("DATABRICKS_WAREHOUSE_ID"),
         }
         # Remove None so the connector can distinguish between not-set vs explicit empty
         kw = {k: v for k, v in kw.items() if v is not None}

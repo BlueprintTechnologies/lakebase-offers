@@ -43,6 +43,11 @@ class TableMetadata(BaseModel):
     is_sensitive: bool = False
     tags: list[str] = Field(default=[])
 
+    # Data growth rate (item 7a)
+    row_count_30d_ago: Optional[int] = Field(default=None, description="from query history or stats")
+    monthly_growth_rate_pct: Optional[float] = Field(default=None, description="derived")
+    is_fast_growing: bool = Field(default=False, description="> 20% month-over-month")
+
 
 class TableMetadataCollection(BaseModel):
     """Collection of table metadata across databases."""

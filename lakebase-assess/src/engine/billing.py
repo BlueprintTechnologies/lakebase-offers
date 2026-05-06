@@ -7,6 +7,8 @@ from typing import Any
 
 import yaml
 
+from src.models.cost_signals import CostSignals
+
 logger = logging.getLogger(__name__)
 
 
@@ -127,68 +129,78 @@ class BillingCalculator:
         self,
         platform_key: str,
         platform_display: str,
-        scores: list[Any],
+        cost_signals: CostSignals | None = None,
+        scores: list[Any] | None = None,  # fallback only
     ) -> dict[str, Any]:
-        """Calculate cost delta for a platform based on scored workloads.
+        """Calculate cost delta for a platform.
+
+        Primary data source: CostSignals from connectors (actual usage data).
+        Fallback: score-based proxy estimates.
 
         ESTIMATED_MONTHLY_COST =
-            (COMPUTE_HOURS × BASE_COMPUTE_RATE)
-            + (STORAGE_GB × STORAGE_RATE_GB)
-            + (QUERY_MB_SCANNED × IO_RATE_MB)
-            + (PEAK_CONCURRENCY × SCALING_MULTIPLIER)
+            (COMPUTE_COST) + (STORAGE_COST) + (IO_COST) + (LICENSE_COST)
         """
         rates = self._rates.get(platform_key, self._rates.get("databricks_sql", DEFAULT_RATES["databricks_sql"]))
 
-        # Aggregate signals from scored workloads
-        total_compute_hours = 0.0
-        total_storage_gb = 0.0
-        total_query_mb = 0.0
-        peak_concurrency = 0
-        total_queries = 0
-        total_rows = 0
+        if cost_signals:
+            # -- real cost data (item 4: actual usage metrics) -- #
+            current_cost = cost_signals.total_estimated_monthly_cost
+            storage_gb = cost_signals.storage_gb_total
+            bytes_scanned = cost_signals.bytes_scanned_per_month
 
-        for s in scores:
-            # Extract metrics from score results or underlying payload
-            # We derive from score attributes where available
-            if hasattr(s, "raw_score") or hasattr(s, "identifier"):
-                # This is a WorkloadScore - we use it as a proxy
-                total_queries += 1
-                # Estimate compute hours from score intensity
-                compute_proxy = s.raw_score / 10.0 if hasattr(s, "raw_score") else 0
-                total_compute_hours += max(compute_proxy, 0.1)
+            # Compute the Lakebase equivalent
+            lakebase_compute = cost_signals.estimated_compute_cost_monthly * (1 - LAKEBASE_RATES["efficiency_gain_pct"])
+            lakebase_storage = storage_gb * LAKEBASE_RATES["storage"]
+            lakebase_io = (bytes_scanned / (1024 * 1024)) * 0.005 if bytes_scanned else 0.0
+            lakebase_total = lakebase_compute + lakebase_storage + lakebase_io
 
-        # Platform-level signals
-        for s in scores:
-            if hasattr(s, "raw_score"):
-                peak_concurrency = max(peak_concurrency, int(s.raw_score / 5.0))
+            # Account for license savings (Lakebase doesn't need separate licenses)
+            license_savings = cost_signals.estimated_license_cost_monthly if cost_signals.has_license_cost else 0.0
+            lakebase_total -= license_savings
 
-        if total_compute_hours == 0:
-            total_compute_hours = 10.0  # Minimum baseline
-        if total_storage_gb == 0:
-            total_storage_gb = 50.0  # Minimum baseline
-        if total_query_mb == 0:
-            total_query_mb = 1000.0  # Minimum baseline
+            total_queries = int(cost_signals.compute_units_per_month) if cost_signals.compute_unit_name == "query-hr (estimated)" else 0
+            peak_concurrency = 0
+            total_compute_hours = cost_signals.compute_units_per_month
+            total_query_mb = bytes_scanned / (1024 * 1024) if bytes_scanned else 0
+        else:
+            # -- proxy fallback (existing behavior) -- #
+            scores = scores or []
+            total_compute_hours = 0.0
+            total_storage_gb = 0.0
+            total_query_mb = 0.0
+            peak_concurrency = 0
+            total_queries = 0
 
-        # Current platform cost
-        compute_cost = total_compute_hours * rates["base_compute"]
-        storage_cost = total_storage_gb * rates["storage"]
-        io_cost = total_query_mb * rates["io"]
-        scaling_mult = rates["scaling"] if peak_concurrency > 50 else 0.0
-        scaling_cost = peak_concurrency * scaling_mult
+            for s in scores:
+                if hasattr(s, "raw_score") or hasattr(s, "identifier"):
+                    total_queries += 1
+                    compute_proxy = s.raw_score / 10.0 if hasattr(s, "raw_score") else 0
+                    total_compute_hours += max(compute_proxy, 0.1)
 
-        current_cost = compute_cost + storage_cost + io_cost + scaling_cost
+            for s in scores:
+                if hasattr(s, "raw_score"):
+                    peak_concurrency = max(peak_concurrency, int(s.raw_score / 5.0))
 
-        # Projected Lakebase cost
-        lakebase_compute = total_compute_hours * LAKEBASE_RATES["compute_dbu"]
-        lakebase_storage = total_storage_gb * LAKEBASE_RATES["storage"]
-        lakebase_query = total_queries * LAKEBASE_RATES["query_cost"]
-        lakebase_total = lakebase_compute + lakebase_storage + lakebase_query
+            if total_compute_hours == 0:
+                total_compute_hours = 10.0
+            if total_storage_gb == 0:
+                total_storage_gb = 50.0
+            if total_query_mb == 0:
+                total_query_mb = 1000.0
+
+            current_cost = total_compute_hours * rates["base_compute"] + total_storage_gb * rates["storage"] + total_query_mb * rates["io"]
+            lakebase_compute = total_compute_hours * LAKEBASE_RATES["compute_dbu"]
+            lakebase_storage = total_storage_gb * LAKEBASE_RATES["storage"]
+            lakebase_io = total_query_mb * 0.005
+            lakebase_total = lakebase_compute + lakebase_storage + lakebase_io
+            license_savings = 0.0
+            total_queries = total_queries
+            bytes_scanned = total_query_mb * 1024 * 1024
 
         savings_pct = 0.0
         if current_cost > 0:
             savings_pct = ((current_cost - lakebase_total) / current_cost) * 100
 
-        # Efficiency metrics
         compute_hours_saved = total_compute_hours * LAKEBASE_RATES["efficiency_gain_pct"]
         cost_per_query_current = current_cost / max(total_queries, 1)
         cost_per_query_lakebase = lakebase_total / max(total_queries, 1)
@@ -197,8 +209,9 @@ class BillingCalculator:
             "platform": platform_display,
             "platform_key": platform_key,
             "current_estimated_monthly_cost": round(current_cost, 2),
-            "projected_lakebase_cost": round(lakebase_total, 2),
+            "projected_lakebase_cost": round(max(lakebase_total, 0), 2),
             "savings_pct": round(savings_pct, 1),
+            "cost_data_source": "actual_signals" if cost_signals else "proxy_estimates",
             "efficiency_gain": {
                 "compute_hours_saved": round(compute_hours_saved, 2),
                 "cost_per_query_current": round(cost_per_query_current, 4),

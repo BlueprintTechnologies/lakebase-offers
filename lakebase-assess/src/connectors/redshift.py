@@ -6,6 +6,7 @@ from typing import Any
 
 from src.connectors.base import AbstractBaseConnector
 from src.models.concurrency import ConcurrencySignals, ConcurrencySnapshot
+from src.models.cost_signals import CostSignals
 from src.models.query_history import QueryHistory, QueryRecord
 from src.models.security import SecurityFinding, SecurityPatterns
 from src.models.table_metadata import TableMetadata, TableMetadataCollection
@@ -288,6 +289,67 @@ class RedshiftConnector(AbstractBaseConnector):
             peak_concurrent_queries=peak_c,
             scaling_pressure=pressure,
         )
+
+    def fetch_cost_signals(self) -> CostSignals:
+        """Estimate Redshift costs from cluster config + STL_QUERY."""
+        import psycopg2
+
+        conn_kwargs = {
+            "dbname": self._kwargs.get("redshift_database", "dev"),
+            "user": self._kwargs.get("redshift_user", ""),
+            "host": f"{self._kwargs.get('redshift_cluster_id', '')}.redshift.{self._kwargs.get('redshift_region', 'us-east-1')}.amazonaws.com",
+            "port": 5439,
+        }
+        pw = self._kwargs.get("redshift_password")
+        if pw:
+            conn_kwargs["password"] = pw
+
+        conn = psycopg2.connect(**conn_kwargs)
+        cur = conn.cursor()
+
+        cost = CostSignals(platform="redshift")
+
+        # Get node count and type
+        cur.execute("SELECT count(*), node_type FROM diststyle GROUP BY node_type LIMIT 1")
+        cluster_rows = cur.fetchall()
+        node_count = 1  # default
+        cluster_type = "dc2"
+
+        cur.execute("SELECT COUNT(*) FROM svv_all_clusters WHERE cluster_type != 'SERVERLESS'")
+        node_count = cur.fetchone()[0] or 1
+
+        # Query volume from STL_QUERY
+        cur.execute("""
+            SELECT SUM(elapsed) / 1000000 / 3600.0 AS compute_node_hrs
+            FROM stl_query
+            WHERE starttime > DATEADD(month, -1, CURRENT_TIMESTAMP)
+        """)
+        node_hrs = float(cur.fetchone()[0] or 0) * node_count
+
+        # Storage from svv_table_info
+        cur.execute("SELECT SUM(size * 1e6) / 1024 / 1024 / 1024 FROM svv_table_info")
+        storage_gb = float(cur.fetchone()[0] or 0)
+
+        conn.close()
+
+        redshift_rate = 0.25  # per node-hr
+        cost.compute_units_per_month = node_hrs
+        cost.compute_unit_name = "node-hr"
+        cost.compute_cost_per_unit = redshift_rate
+        cost.estimated_compute_cost_monthly = node_hrs * redshift_rate
+        cost.storage_gb_total = storage_gb
+        cost.storage_cost_per_gb = 0.024
+        cost.estimated_storage_cost_monthly = storage_gb * 0.024
+        cost.bytes_scanned_per_month = 0.0
+        cost.io_cost_per_mb = 0.000001
+        cost.estimated_io_cost_monthly = 0.0
+        cost.total_estimated_monthly_cost = (
+            cost.estimated_compute_cost_monthly
+            + cost.estimated_storage_cost_monthly
+        )
+        cost.costs_from_billing_api = False
+
+        return cost
 
     def fetch_security_patterns(self) -> SecurityPatterns:
         findings: list[SecurityFinding] = []

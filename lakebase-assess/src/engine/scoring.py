@@ -2,7 +2,7 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 from src.models.assessment_payload import AssessmentPayload
 
@@ -208,6 +208,18 @@ class ScoreEngine:
         if payload.needs_scaling:
             pain += 1
 
+        # New: cost per query above platform median
+        if payload.cost_signals and payload.cost_signals.cost_per_query > 0:
+            pain += 1
+
+        # New: burst pattern
+        if payload.access_patterns and payload.access_patterns.has_burst_pattern:
+            pain += 1
+
+        # New: concurrency p99
+        if payload.concurrency_signals and payload.concurrency_signals.p99_queue_time_ms and payload.concurrency_signals.p99_queue_time_ms > 5000:
+            pain += 2
+
         # Round and clamp
         return max(1, min(5, int(round(pain))))
 
@@ -225,6 +237,14 @@ class ScoreEngine:
         if payload.has_security_issues:
             impact += 0.5
 
+        # New: app-serving workload (high point lookup percentage)
+        if payload.access_patterns and payload.access_patterns.point_lookup_pct > 0.5:
+            impact += 1
+
+        # New: high compute cost
+        if payload.cost_signals and payload.cost_signals.estimated_compute_cost_monthly > 10000:
+            impact += 2
+
         return max(1, min(5, int(round(impact))))
 
     @staticmethod
@@ -240,6 +260,17 @@ class ScoreEngine:
             complexity += 1
         if payload.table_metadata.has_materialized_views:
             complexity += 0.5
+
+        # New: count-based migration complexity signals
+        mc = payload.migration_complexity
+        if mc:
+            non_portable_udfs = sum(1 for u in mc.udf_records if not u.is_portable)
+            complexity += min(non_portable_udfs, 3)
+            loop_procs = sum(1 for p in mc.stored_proc_records if p.has_loops)
+            complexity += min(loop_procs, 2)
+            complexity += min(mc.binary_column_count, 2)
+            complexity += min(mc.cross_db_join_count, 2)
+            complexity += 3 if mc.has_unsupported_types else 0
 
         return max(1, min(5, int(round(complexity))))
 

@@ -6,6 +6,7 @@ from typing import Any
 
 from src.connectors.base import AbstractBaseConnector
 from src.models.concurrency import ConcurrencySignals, ConcurrencySnapshot
+from src.models.cost_signals import CostSignals
 from src.models.query_history import QueryHistory, QueryRecord
 from src.models.security import SecurityFinding, SecurityPatterns
 from src.models.table_metadata import TableMetadata, TableMetadataCollection
@@ -237,6 +238,59 @@ class SynapseConnector(AbstractBaseConnector):
             peak_concurrent_queries=int(count),
             scaling_pressure="medium",
         )
+
+    def fetch_cost_signals(self) -> CostSignals:
+        """Estimate Synapse costs from sys.dm_pdw_exec_requests + DWU config."""
+        import psycopg2
+
+        conn_kwargs = {
+            "dbname": self._kwargs.get("synapse_database", "master"),
+            "user": f"{self._kwargs.get('synapse_user', '')}@{self._kwargs.get('synapse_server', '')}.sql.azuresynapse.net",
+            "host": f"{self._kwargs.get('synapse_server', '')}.sql.azuresynapse.net",
+            "port": 1433,
+        }
+        pw = self._kwargs.get("synapse_password")
+        if pw:
+            conn_kwargs["password"] = pw
+
+        conn = psycopg2.connect(**conn_kwargs)
+        cur = conn.cursor()
+
+        cost = CostSignals(platform="synapse")
+
+        # Get DWU usage
+        cur.execute("""
+            SELECT SUM(total_elapsed_time) / 60000.0 AS total_min_elapsed
+            FROM sys.dm_pdw_exec_requests
+            WHERE start_time > DATEADD(month, -1, GETDATE())
+        """)
+        dwu_min = float(cur.fetchone()[0] or 0)
+        dwu_hours = dwu_min / 60.0
+
+        # Storage from pdw_table_sizes
+        cur.execute("SELECT SUM(reserve_bytes) / 1024 / 1024 / 1024 FROM sys.pdw_table_sizes")
+        storage_gb = float(cur.fetchone()[0] or 0)
+
+        conn.close()
+
+        synapse_rate = 0.42  # DWU-hr
+        cost.compute_units_per_month = dwu_hours
+        cost.compute_unit_name = "DWU-hr"
+        cost.compute_cost_per_unit = synapse_rate
+        cost.estimated_compute_cost_monthly = dwu_hours * synapse_rate
+        cost.storage_gb_total = storage_gb
+        cost.storage_cost_per_gb = 0.015
+        cost.estimated_storage_cost_monthly = storage_gb * 0.015
+        cost.bytes_scanned_per_month = 0.0
+        cost.io_cost_per_mb = 0.000001
+        cost.estimated_io_cost_monthly = 0.0
+        cost.total_estimated_monthly_cost = (
+            cost.estimated_compute_cost_monthly
+            + cost.estimated_storage_cost_monthly
+        )
+        cost.costs_from_billing_api = False
+
+        return cost
 
     def fetch_security_patterns(self) -> SecurityPatterns:
         return SecurityPatterns(

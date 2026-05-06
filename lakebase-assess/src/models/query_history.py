@@ -45,6 +45,14 @@ class QueryRecord(BaseModel):
     timeout_count: int = Field(default=0)
     error_count: int = Field(default=0)
 
+    # New fields for enhanced analysis
+    hour_of_day_histogram: list[int] = Field(default=[], description="24-element list, query count per hour")
+    is_point_lookup: bool = False  # WHERE primary_key = ?
+    is_full_scan: bool = False  # reads > 50% of table rows
+    is_write: bool = False  # INSERT/UPDATE/DELETE/MERGE
+    cache_hit: bool = False  # did this hit a result cache?
+    user_type: str = Field(default="", description="app_service_account | analyst | etl_job | admin")
+
     @field_validator("query_text_fingerprint")
     @classmethod
     def strip_pii(cls, v: str) -> str:

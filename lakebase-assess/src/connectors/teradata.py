@@ -6,6 +6,7 @@ from typing import Any
 
 from src.connectors.base import AbstractBaseConnector
 from src.models.concurrency import ConcurrencySignals, ConcurrencySnapshot
+from src.models.cost_signals import CostSignals
 from src.models.query_history import QueryHistory, QueryRecord
 from src.models.security import SecurityFinding, SecurityPatterns
 from src.models.table_metadata import TableMetadata, TableMetadataCollection
@@ -191,6 +192,49 @@ class TeradataConnector(AbstractBaseConnector):
             peak_concurrent_queries=active,
             scaling_pressure="high",
         )
+
+    def fetch_cost_signals(self) -> CostSignals:
+        """Estimate Teradata costs from on-prem baseline."""
+        import teradata
+
+        udl = f"odbc:driver={{Teradata}};dbq={self._kwargs.get('teradata_host', '')};hostname={self._kwargs.get('teradata_host', '')};port={int(self._kwargs.get('teradata_port', 1025))}"
+        conn = teradata.UdaExec(appName="lakebase-assess", logError=False, logWarning=False, logInfo=False)
+        session = conn.createSession(udl, userName=self._kwargs.get("teradata_user", ""), password=self._kwargs.get("teradata_password", ""))
+
+        cost = CostSignals(platform="teradata")
+
+        try:
+            session.execute("SELECT SUM(permSpace) / 1024 / 1024 / 1024 FROM dbc.tablesv WHERE tablekind = 'T'")
+            storage_gb = float(session.fetchone()[0] or 0)
+        except Exception:
+            storage_gb = 200.0
+
+        session.close()
+
+        # On-prem estimate
+        compute_cost_monthly = 800.0  # baseline VM
+        license_cost = 5000.0 / 12.0
+        license_type = "enterprise"
+
+        cost.compute_units_per_month = 0.0
+        cost.compute_unit_name = "N/A (estimated)"
+        cost.compute_cost_per_unit = 0.0
+        cost.estimated_compute_cost_monthly = compute_cost_monthly
+        cost.storage_gb_total = storage_gb
+        cost.storage_cost_per_gb = 0.035
+        cost.estimated_storage_cost_monthly = storage_gb * 0.035
+        cost.bytes_scanned_per_month = 0.0
+        cost.io_cost_per_mb = 0.0000008
+        cost.estimated_io_cost_monthly = 0.0
+        cost.has_license_cost = True
+        cost.estimated_license_cost_monthly = license_cost
+        cost.license_type = license_type
+        cost.total_estimated_monthly_cost = (
+            compute_cost_monthly + storage_gb * 0.035 + license_cost
+        )
+        cost.costs_from_billing_api = False
+
+        return cost
 
     def fetch_security_patterns(self) -> SecurityPatterns:
         return SecurityPatterns(

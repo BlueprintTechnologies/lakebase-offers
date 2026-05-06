@@ -6,6 +6,7 @@ from typing import Any
 
 from src.connectors.base import AbstractBaseConnector
 from src.models.concurrency import ConcurrencySignals, ConcurrencySnapshot
+from src.models.cost_signals import CostSignals
 from src.models.query_history import QueryHistory, QueryRecord
 from src.models.security import SecurityFinding, SecurityPatterns
 from src.models.table_metadata import TableMetadata, TableMetadataCollection
@@ -225,6 +226,65 @@ class OracleConnector(AbstractBaseConnector):
             peak_concurrent_queries=active,
             scaling_pressure="high" if active > 100 else "medium" if active > 20 else "low",
         )
+
+    def fetch_cost_signals(self) -> CostSignals:
+        """Estimate Oracle costs from v$session + licensing model."""
+        import cx_Oracle
+
+        conn_kwargs = {
+            "user": self._kwargs.get("oracle_user", ""),
+            "password": self._kwargs.get("oracle_password", ""),
+            "dsn": f"{self._kwargs.get('oracle_host', '')}:{int(self._kwargs.get('oracle_port', 1521))}/{self._kwargs.get('oracle_service', '')}",
+        }
+        conn = cx_Oracle.connect(**conn_kwargs)
+        cur = conn.cursor()
+
+        cost = CostSignals(platform="oracle")
+
+        # Get CPU cores
+        try:
+            cur.execute("SELECT value FROM v$parameter WHERE name = 'cpu_count'")
+            cpu_cores = int(cur.fetchone()[0] or 4)
+        except Exception:
+            cpu_cores = 4
+
+        # Get table storage
+        cur.execute("SELECT SUM(bytes) / 1024 / 1024 / 1024 FROM dba_segments")
+        storage_gb = float(cur.fetchone()[0] or 0)
+
+        # Oracle licensing: enterprise edition cost
+        edition = str(self._kwargs.get("oracle_edition", "enterprise")).lower()
+        if "standard" in edition:
+            license_cost = 4000.0 / 12.0
+        else:
+            license_cost = 10000.0 / 12.0  # enterprise
+
+        # Estimate compute from CPU cores (amortized hourly rate)
+        compute_cost_monthly = cpu_cores * 2.0  # ~$2/core-hr amortized
+
+        conn.close()
+
+        cost.compute_units_per_month = cpu_cores * 730  # cores * hours/month
+        cost.compute_unit_name = "core-hr (amortized)"
+        cost.compute_cost_per_unit = 2.0
+        cost.estimated_compute_cost_monthly = compute_cost_monthly
+        cost.storage_gb_total = storage_gb
+        cost.storage_cost_per_gb = 0.035
+        cost.estimated_storage_cost_monthly = storage_gb * 0.035
+        cost.bytes_scanned_per_month = 0.0
+        cost.io_cost_per_mb = 0.0000008
+        cost.estimated_io_cost_monthly = 0.0
+        cost.has_license_cost = True
+        cost.license_type = "enterprise" if "enterprise" in edition else "standard"
+        cost.estimated_license_cost_monthly = license_cost
+        cost.total_estimated_monthly_cost = (
+            compute_cost_monthly
+            + storage_gb * 0.035
+            + license_cost
+        )
+        cost.costs_from_billing_api = False
+
+        return cost
 
     def fetch_security_patterns(self) -> SecurityPatterns:
         return SecurityPatterns(

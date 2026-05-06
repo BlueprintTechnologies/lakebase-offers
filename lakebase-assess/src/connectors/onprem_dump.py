@@ -9,6 +9,7 @@ from typing import Any
 
 from src.connectors.base import AbstractBaseConnector
 from src.models.concurrency import ConcurrencySignals
+from src.models.cost_signals import CostSignals
 from src.models.query_history import QueryHistory, QueryRecord
 from src.models.security import SecurityFinding, SecurityPatterns
 from src.models.table_metadata import TableMetadata, TableMetadataCollection
@@ -188,6 +189,51 @@ class OnPremDumpConnector(AbstractBaseConnector):
             peak_concurrent_queries=0,
             scaling_pressure="unknown",
         )
+
+    def fetch_cost_signals(self) -> CostSignals:
+        """Estimate costs from table metadata in imported dump."""
+        cost = CostSignals(platform="onprem_dump")
+        total_storage_gb = 0.0
+        if self._csv_path:
+            total_storage_gb = self._get_csv_table_storage()
+        elif self._json_path:
+            total_storage_gb = self._get_json_table_storage()
+        else:
+            total_storage_gb = 50.0
+
+        cost.compute_units_per_month = 0.0
+        cost.compute_unit_name = "N/A (estimated)"
+        cost.compute_cost_per_unit = 0.0
+        cost.estimated_compute_cost_monthly = 300.0  # baseline
+        cost.storage_gb_total = total_storage_gb
+        cost.storage_cost_per_gb = 0.02
+        cost.estimated_storage_cost_monthly = total_storage_gb * 0.02
+        cost.bytes_scanned_per_month = 0.0
+        cost.io_cost_per_mb = 0.000001
+        cost.estimated_io_cost_monthly = 0.0
+        cost.total_estimated_monthly_cost = 300.0 + total_storage_gb * 0.02
+        cost.costs_from_billing_api = False
+        return cost
+
+    def _get_csv_table_storage(self) -> float:
+        total = 0.0
+        if self._csv_path:
+            with open(self._csv_path, newline="", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    size = row.get("storage_size_bytes", row.get("bytes", "0"))
+                    total += self._safe_int(size)
+        return total / 1024 / 1024 / 1024 if total else 50.0
+
+    def _get_json_table_storage(self) -> float:
+        total = 0.0
+        with open(self._json_path) as f:
+            data = json.load(f)
+        raw_list = data if isinstance(data, list) else data.get("tables", [])
+        for item in raw_list:
+            size = item.get("storage_size_bytes", item.get("bytes", 0))
+            total += self._safe_int(size)
+        return total / 1024 / 1024 / 1024 if total else 50.0
 
     def fetch_security_patterns(self) -> SecurityPatterns:
         return SecurityPatterns(
