@@ -25,16 +25,16 @@ class CacheCandidate(BaseModel):
 
 class AccessPatternSignals(BaseModel):
     platform: str
-    read_write_ratio: float = Field(description="reads / (reads + writes)")
-    point_lookup_pct: float = Field(description="fraction of queries that are single-row lookups")
-    full_scan_pct: float = Field(description="fraction that scan > 50% of table")
+    read_write_ratio: float = Field(default=0.0, description="reads / (reads + writes)")
+    point_lookup_pct: float = Field(default=0.0, description="fraction of queries that are single-row lookups")
+    full_scan_pct: float = Field(default=0.0, description="fraction that scan > 50% of table")
     cache_candidates: list[CacheCandidate] = Field(default=[])
-    estimated_cacheable_pct: float = Field(description="fraction of all queries that are cacheable")
+    estimated_cacheable_pct: float = Field(default=0.0, description="fraction of all queries that are cacheable")
     temporal_buckets: list[QueryTemporalBucket] = Field(default=[])
     peak_hour_of_day: int = 0
     peak_day_of_week: int = Field(default=0, description="0=Monday")
-    off_peak_query_pct: float = Field(description="queries outside business hours")
-    repeated_query_pct: float = Field(description="same fingerprint > 3x in window")
-    avg_data_staleness_hours: float = Field(description="how fresh does data need to be?")
-    has_burst_pattern: bool = Field(description="peak > 5x average")
+    off_peak_query_pct: float = Field(default=0.0, description="queries outside business hours")
+    repeated_query_pct: float = Field(default=0.0, description="same fingerprint > 3x in window")
+    avg_data_staleness_hours: float = Field(default=0.0, description="how fresh does data need to be?")
+    has_burst_pattern: bool = Field(default=False, description="peak > 5x average")
     burst_duration_minutes: int = 0

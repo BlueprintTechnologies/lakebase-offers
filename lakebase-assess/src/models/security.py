@@ -34,6 +34,8 @@ class SecurityPatterns(BaseModel):
     total_findings: int = 0
     high_severity_count: int = 0
     critical_severity_count: int = 0
+    active_users_last_30d: int = Field(default=0, description="distinct human users who ran queries")
+    active_service_accounts_last_30d: int = Field(default=0, description="distinct service/robot accounts")
 
     @property
     def needs_security_hardening(self) -> bool:

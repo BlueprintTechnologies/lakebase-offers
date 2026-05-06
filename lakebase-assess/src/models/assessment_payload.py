@@ -34,6 +34,8 @@ class AssessmentPayload(BaseModel):
     has_pending_license_increase: bool = Field(default=False)
     availability_signals: Optional[AvailabilitySignals] = None
     workload_context: dict[str, Any] = Field(default_factory=dict, description="multi_region, dr_requirement, regulated")
+    # SE-captured qualitative context from architecture interview (§12)
+    interview_inputs: dict[str, Any] = Field(default_factory=dict, description="SE-captured context from architecture interview")
 
     # Flags for scoring convenience
     @property

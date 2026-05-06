@@ -7,9 +7,9 @@ class CostSignals(BaseModel):
     platform: str
 
     # Compute
-    compute_units_per_month: float = Field(description="credits (Snowflake), DWUs (Synapse), node-hrs (Redshift)")
-    compute_unit_name: str = Field(description="credit | DWU-hr | node-hr | core-hr")
-    compute_cost_per_unit: float = Field(description="from billing.py DEFAULT_RATES or YAML override")
+    compute_units_per_month: float = Field(default=0.0, description="credits (Snowflake), DWUs (Synapse), node-hrs (Redshift)")
+    compute_unit_name: str = Field(default="unknown", description="credit | DWU-hr | node-hr | core-hr")
+    compute_cost_per_unit: float = Field(default=0.0, description="from billing.py DEFAULT_RATES or YAML override")
     estimated_compute_cost_monthly: float = 0.0
 
     # Storage

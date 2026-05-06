@@ -34,12 +34,12 @@ class MigrationComplexitySignals(BaseModel):
     stored_proc_count: int = 0
     stored_proc_records: list[StoredProcRecord] = Field(default=[])
     trigger_count: int = 0
-    sequence_count: int = Field(description="sequences / identity columns")
-    cross_db_join_count: int = Field(description="queries joining across database boundaries")
+    sequence_count: int = Field(default=0, description="sequences / identity columns")
+    cross_db_join_count: int = Field(default=0, description="queries joining across database boundaries")
     binary_column_count: int = 0
     binary_column_records: list[BinaryColumnRecord] = Field(default=[])
-    proprietary_type_count: int = Field(description="types with no Delta equivalent")
-    linked_server_count: int = Field(description="SQL Server: linked server dependencies")
-    dblink_count: int = Field(description="Oracle: db link dependencies")
+    proprietary_type_count: int = Field(default=0, description="types with no Delta equivalent")
+    linked_server_count: int = Field(default=0, description="SQL Server: linked server dependencies")
+    dblink_count: int = Field(default=0, description="Oracle: db link dependencies")
     estimated_migration_weeks: float = 0.0
     has_unsupported_types: bool = False
