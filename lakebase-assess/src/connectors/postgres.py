@@ -1,7 +1,7 @@
 """PostgreSQL connector - read-only query history and metadata."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from src.connectors.base import AbstractBaseConnector
@@ -197,7 +197,7 @@ class PostgresConnector(AbstractBaseConnector):
                 row_count=self._safe_int(rd.get("row_count")),
                 storage_size_bytes=self._safe_int(rd.get("table_size_bytes")),
                 last_analyzed=rd.get("last_analyze"),
-                is_stale_stats=not bool(rd.get("last_analyze")),
+                is_stale_stats=AbstractBaseConnector._is_stats_stale(rd.get("last_analyze")),
                 is_sensitive="pii" in str(rd.get("tablename", "")).lower(),
             )
             tables.append(t)
@@ -303,6 +303,42 @@ class PostgresConnector(AbstractBaseConnector):
         return cost
 
     def fetch_security_patterns(self) -> SecurityPatterns:
+        conn_kwargs = {
+            "dbname": self._kwargs.get("pg_database", "postgres"),
+            "user": self._kwargs.get("pg_user", ""),
+            "host": self._kwargs.get("pg_host", ""),
+            "port": int(self._kwargs.get("pg_port", 5432)),
+        }
+        pw = self._kwargs.get("pg_password")
+        if pw:
+            conn_kwargs["password"] = pw
+
+        import psycopg2
+
+        active_users = 0
+        active_sa = 0
+        try:
+            with psycopg2.connect(**conn_kwargs) as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT usename
+                    FROM pg_stat_statements
+                    WHERE dbid IN (SELECT oid FROM pg_database WHERE datname = current_database())
+                    AND to_timestamp(now()) - max(gtime) < INTERVAL '30 days'
+                    GROUP BY usename
+                """)
+                for (user,) in cur.fetchall():
+                    user = str(user or "")
+                    if not user:
+                        continue
+                    if any(p in user.lower() for p in ("sa_", "_svc", "robot", "service_acct")):
+                        active_sa += 1
+                    else:
+                        active_users += 1
+                cur.close()
+        except Exception:
+            pass
+
         return SecurityPatterns(
             platform="postgres",
             findings=[
@@ -319,4 +355,6 @@ class PostgresConnector(AbstractBaseConnector):
             total_findings=1,
             high_severity_count=0,
             critical_severity_count=0,
+            active_users_last_30d=active_users,
+            active_service_accounts_last_30d=active_sa,
         )

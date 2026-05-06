@@ -195,7 +195,8 @@ class SnowflakeConnector(AbstractBaseConnector):
                 is_partitioned=False,
                 column_count=self._safe_int(rd.get("column_count", 0)),
                 last_analyzed=datetime.fromisoformat(str(rd.get("last_altered"))) if rd.get("last_altered") else None,
-                is_stale_stats=False,
+                is_stale_stats=(rd.get("last_altered")
+                              and (datetime.now() - datetime.fromisoformat(str(rd["last_altered"]))) > timedelta(days=30)),
                 is_sensitive="PII" in str(rd.get("tags", "")).upper() or "SENSITIVE" in str(rd.get("tags", "")).upper(),
             )
             tables.append(t)
@@ -334,6 +335,27 @@ class SnowflakeConnector(AbstractBaseConnector):
                 remediation="Configure SCIM provisioning with an identity provider.",
             ))
 
+        # Count active users (item 7f)
+        active_users = 0
+        active_sa = 0
+        try:
+            cur.execute("""
+                SELECT DISTINCT EXECUTED_AS_USER_NAME
+                FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY(
+                    RESULT_LIMIT => 100000,
+                    RESULT_SERVICE_PERIOD => DATEADD(day, -30, CURRENT_TIMESTAMP())
+                ))
+                WHERE EXECUTED_AS_USER_NAME IS NOT NULL
+            """)
+            users = {row[0] for row in cur.fetchall() if row[0]}
+            for user in users:
+                if user.startswith("SA_") or "_svc" in user.lower() or user.startswith("robot"):
+                    active_sa += 1
+                else:
+                    active_users += 1
+        except Exception:
+            pass
+
         conn.close()
 
         return SecurityPatterns(
@@ -351,6 +373,8 @@ class SnowflakeConnector(AbstractBaseConnector):
             total_findings=len(findings),
             high_severity_count=sum(1 for f in findings if f.severity == "high"),
             critical_severity_count=sum(1 for f in findings if f.severity == "critical"),
+            active_users_last_30d=active_users,
+            active_service_accounts_last_30d=active_sa,
         )
 
     # -- cost signals (item 4: real billing data) -- #

@@ -7,7 +7,18 @@ from typing import Any
 from src.connectors.base import AbstractBaseConnector
 from src.models.concurrency import ConcurrencySignals, ConcurrencySnapshot
 from src.models.cost_signals import CostSignals
-from src.models.databricks_misuse import DatabricksMisuseFindings, MisuseFinding
+from src.models.databricks_misuse import (
+    DatabricksMisuseFindings,
+    JobRunRecord,
+    JobRunTimeline,
+    MisuseFinding,
+    FINDING_HIGH_FREQ_POINT_LOOKUP,
+    FINDING_AGENT_STATE_DELTA_MISUSE,
+    FINDING_APP_BACKEND_ON_DELTA,
+    FINDING_FEATURE_STORE_LATENCY,
+    FINDING_HIGH_CONCURRENCY_COST,
+    FINDING_CACHING_LAYER_BYPASS,
+)
 from src.models.query_history import QueryHistory, QueryRecord
 from src.models.security import SecurityFinding, SecurityPatterns
 from src.models.table_metadata import TableMetadata, TableMetadataCollection
@@ -294,12 +305,15 @@ class DatabricksConnector(AbstractBaseConnector):
 
     # -- misuse detection -- #
 
-    def fetch_misuse_signals(self) -> DatabricksMisuseFindings:
-        """Scan existing Databricks workspace for sub-optimal usage patterns.
+    def fetch_misuse_signals(
+        self,
+        caching_layers: list[str] | None = None,
+    ) -> DatabricksMisuseFindings:
+        """Scan Databricks workspace for the 6 canonical anti-patterns (§13).
 
-        Detects: repeated identical queries, point lookups on large tables,
-        high-frequency micro-writes, serverless misconfiguration, small table full scans.
+        caching_layers: from interview_inputs.caching_layers for CACHING_LAYER_BYPASS detection.
         """
+        import re
         import requests
         from collections import defaultdict
 
@@ -311,123 +325,305 @@ class DatabricksConnector(AbstractBaseConnector):
 
         findings: list[MisuseFinding] = []
 
-        # Get warehouse info for auto-stop check
-        resp = requests.get(
-            f"https://{host}/api/2.0/warehouses",
-            headers=headers,
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            for wh in resp.json().get("warehouses", []):
-                if not wh.get("auto_stop_maintenance", {}).get("enabled", True):
-                    findings.append(MisuseFinding(
-                        finding_type="Warehouse misconfigured",
-                        severity="medium",
-                        affected_object=wh.get("name", wh.get("id", "unknown")),
-                        description="Warehouse auto-stop not configured; 0 queries between 11pm-6am detected.",
-                        evidence="auto_stop_maintenance not enabled",
-                        recommendation="Enable auto-stop to avoid idle compute costs.",
-                        estimated_monthly_savings_dbu=10.0,
-                    ))
+        # Fetch warehouse list (used for anti-patterns 03 and 05)
+        wh_resp = requests.get(f"https://{host}/api/2.0/warehouses", headers=headers, timeout=10)
+        warehouses = wh_resp.json().get("warehouses", []) if wh_resp.status_code == 200 else []
 
-        # Get query history for misuse patterns
+        # Fetch query history (last 7 days or configured window, max)
         from_date = (datetime.now() - timedelta(days=min(days, 7))).isoformat()
         history_sql = f"""
         SELECT
-            statement_text, read_rows, result_rows, from_result_cache,
-            warehouse_id, read_bytes, start_time, total_time_ms
+            statement_text, statement_type, read_rows, result_rows, from_result_cache,
+            warehouse_id, read_bytes, start_time, end_time, total_time_ms,
+            executed_as_user_name, session_id, status
         FROM system.query.history
         WHERE start_time >= TIMESTAMP '{from_date}'
+        LIMIT 50000
         """
-        resp = requests.post(
-            f"https://{host}/api/2.1/sql/statements",
-            headers=headers,
-            json={"statement": history_sql, "warehouse_id": warehouse_id},
-        )
+        rows_data = self._run_sql(host, token, warehouse_id, history_sql, headers)
 
-        rows_data = []
-        if resp.status_code == 200:
-            results = resp.json()
-            result_state = results.get("result", {}).get("result_state", "PENDING")
-            if result_state == "PENDING":
-                statement_id = results.get("result", {}).get("statement_id", "")
-                for _ in range(60):
-                    import time
-                    time.sleep(1)
-                    poll = requests.get(
-                        f"https://{host}/api/2.1/sql/statements/{statement_id}",
-                        headers=headers,
-                    )
-                    if poll.json().get("result", {}).get("result_state") == "COMPLETED":
-                        break
-                if poll.status_code == 200:
-                    rows_data = poll.json().get("result", {}).get("data_sql_response", {}).get("data", [])
-            else:
-                rows_data = results.get("result", {}).get("data_sql_response", {}).get("data", [])
-
-        # Analyze misuse patterns
-        query_fingerprints: dict[str, list] = defaultdict(list)
-        warehouse_noquery: set[str] = set()
+        # Build per-fingerprint and per-user buckets
+        by_fingerprint: dict[str, list[dict]] = defaultdict(list)
+        by_user: dict[str, list[dict]] = defaultdict(list)
+        by_hour: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
 
         for row in rows_data:
-            rd = dict(zip(["statement_text", "read_rows", "result_rows", "from_result_cache",
-                           "warehouse_id", "read_bytes", "start_time", "total_time_ms"], row))
-            fingerprint = self._hash_query_text(str(rd.get("statement_text", "") or ""))
-            query_fingerprints[fingerprint].append(rd)
+            rd = dict(zip(
+                ["statement_text", "statement_type", "read_rows", "result_rows", "from_result_cache",
+                 "warehouse_id", "read_bytes", "start_time", "end_time", "total_time_ms",
+                 "executed_as_user_name", "session_id", "status"],
+                row,
+            ))
+            fp = self._hash_query_text(str(rd.get("statement_text", "") or ""))
+            by_fingerprint[fp].append(rd)
 
-        # Pattern 1: Repeated identical queries with low row count
-        for fp, rows in query_fingerprints.items():
-            if len(rows) > 50:
-                avg_result = sum(r.get("result_rows", 0) for r in rows) / len(rows)
-                if avg_result < 100:
+            user = str(rd.get("executed_as_user_name", "") or "")
+            by_user[user].append(rd)
+
+            wh = str(rd.get("warehouse_id", "") or "")
+            try:
+                hour = datetime.fromisoformat(str(rd.get("start_time", "")).replace("Z", "+00:00")).hour
+                by_hour[wh][hour] += 1
+            except (ValueError, TypeError):
+                pass
+
+        # ── Anti-Pattern 01: High-Frequency Point Lookups ──────────────────────
+        for fp, rows in by_fingerprint.items():
+            sample_text = str(rows[0].get("statement_text", "") or "")
+            if not re.search(r"WHERE\s+\w+\s*=\s*[0-9'\"]", sample_text, re.IGNORECASE):
+                continue
+            daily_count = len(rows)
+            avg_result = sum(r.get("result_rows", 0) or 0 for r in rows) / max(len(rows), 1)
+            avg_bytes = sum(r.get("read_bytes", 0) or 0 for r in rows) / max(len(rows), 1)
+            if daily_count > 500 and avg_result < 5 and avg_bytes > 10_000_000:
+                findings.append(MisuseFinding(
+                    finding_type=FINDING_HIGH_FREQ_POINT_LOOKUP,
+                    severity="high",
+                    affected_object=fp[:32],
+                    description="Single-row SELECTs running 500+ times/day against a Delta table.",
+                    evidence=(
+                        f"ran {daily_count} times/day, avg {avg_result:.0f} rows returned, "
+                        f"avg {avg_bytes / 1_000_000:.1f}MB scanned per lookup"
+                    ),
+                    recommendation=(
+                        "Move hot keys to Lakebase (Pro warehouse + bloom filter + liquid clustering); "
+                        "sub-10ms indexed lookups."
+                    ),
+                    estimated_monthly_savings_dbu=daily_count * 30 * 0.001,
+                ))
+
+        # ── Anti-Pattern 02: AI Agent State Storage ─────────────────────────────
+        agent_state_pattern = re.compile(
+            r"\b(state|queue|session|memory|context|slot)\b", re.IGNORECASE
+        )
+        table_write_counts: dict[str, int] = defaultdict(int)
+        for fp, rows in by_fingerprint.items():
+            sample = str(rows[0].get("statement_text", "") or "")
+            stmt_type = str(rows[0].get("statement_type", "") or "").upper()
+            if stmt_type in ("INSERT", "MERGE", "UPDATE") and agent_state_pattern.search(sample):
+                writes_per_min = len(rows) / (7 * 24 * 60)
+                if writes_per_min > 100 / (24 * 60):  # > 100/min scaled
+                    tbl_match = re.search(r"(?:INTO|UPDATE|MERGE\s+INTO)\s+([\w.]+)", sample, re.IGNORECASE)
+                    tbl = tbl_match.group(1) if tbl_match else fp[:32]
                     findings.append(MisuseFinding(
-                        finding_type="Cache candidate",
+                        finding_type=FINDING_AGENT_STATE_DELTA_MISUSE,
                         severity="high",
-                        affected_object=fp[:32],
-                        description=f"Identical query ran {len(rows)} times in 24h with avg {avg_result:.0f} rows.",
-                        evidence=f"ran {len(rows)} times in 24h, avg {avg_result:.0f} rows per execution",
-                        recommendation="Cache candidate: result cache or Redis.",
-                        estimated_monthly_savings_dbu=len(rows) * 0.005,
-                    ))
-
-        # Pattern 2: Point lookups against large tables
-        for fp, rows in query_fingerprints.items():
-            for r in rows:
-                read_rows = r.get("read_rows", 0) or 0
-                read_bytes = r.get("read_bytes", 0) or 0
-                result_rows = r.get("result_rows", 0) or 0
-                if read_rows < 10 and read_bytes > 1024 * 1024:  # < 10 rows but > 1MB scanned
-                    findings.append(MisuseFinding(
-                        finding_type="Table too large for point lookup",
-                        severity="medium",
-                        affected_object=str(r.get("warehouse_id", "unknown")),
-                        description="Point lookup pattern against large Delta table.",
-                        evidence=f"read_rows={read_rows}, read_bytes={read_bytes / 1024 / 1024:.1f}MB",
-                        recommendation="Table too large for point lookup — add bloom filter or move hot keys to Redis.",
+                        affected_object=tbl,
+                        description="Table with agent-state naming pattern has high write frequency on Delta.",
+                        evidence=(
+                            f"table matches *state/*queue/*session pattern; "
+                            f"{len(rows)} writes in 7 days"
+                        ),
+                        recommendation=(
+                            "Use Lakebase (Pro warehouse) or Postgres for agent state; "
+                            "sub-ms writes + native SEQUENCE support."
+                        ),
                         estimated_monthly_savings_dbu=0.0,
                     ))
 
-        # Pattern 3: Never cached despite identical queries
-        uncached_same_fp = [fp for fp, rows in query_fingerprints.items()
-                            if len(rows) > 20 and all(not r.get("from_result_cache") for r in rows)]
-        for fp in uncached_same_fp:
-            findings.append(MisuseFinding(
-                finding_type="Cache not warming",
-                severity="medium",
-                affected_object=fp[:32],
-                description="Identical queries executed > 20 times without cache hits.",
-                evidence=f"{len(query_fingerprints[fp])} identical queries, 0 cache hits",
-                recommendation="Check warehouse serverless vs. Pro mode; warm result cache.",
-                estimated_monthly_savings_dbu=len(query_fingerprints[fp]) * 0.002,
-            ))
+        # ── Anti-Pattern 03: App Backend Workloads ──────────────────────────────
+        for user, rows in by_user.items():
+            if not any(kw in user.lower() for kw in ("service", "app", "bot", "api", "svc")):
+                continue
+            write_count = sum(
+                1 for r in rows
+                if str(r.get("statement_type", "") or "").upper() in ("INSERT", "UPDATE", "DELETE", "MERGE")
+            )
+            write_pct = write_count / max(len(rows), 1)
+            avg_write_rows = (
+                sum(r.get("read_rows", 0) or 0 for r in rows if str(r.get("statement_type", "") or "").upper()
+                    in ("INSERT", "UPDATE", "DELETE")) / max(write_count, 1)
+            )
+            if write_pct > 0.5 and write_count > 200 and avg_write_rows < 100:
+                findings.append(MisuseFinding(
+                    finding_type=FINDING_APP_BACKEND_ON_DELTA,
+                    severity="medium",
+                    affected_object=user,
+                    description="Service account running transactional row-level writes against Delta tables.",
+                    evidence=(
+                        f"user={user}, write_pct={write_pct:.0%}, "
+                        f"write_count={write_count}, avg_rows_per_write={avg_write_rows:.0f}"
+                    ),
+                    recommendation=(
+                        "Lakebase Serverless for queries + Postgres for row-level transactional writes; "
+                        "eliminate always-on cluster cost."
+                    ),
+                    estimated_monthly_savings_dbu=0.0,
+                ))
+
+        # ── Anti-Pattern 04: Feature Store Latency ──────────────────────────────
+        feature_pattern = re.compile(r"\bfeature[s]?\b", re.IGNORECASE)
+        by_table_latency: dict[str, list[float]] = defaultdict(list)
+        for fp, rows in by_fingerprint.items():
+            sample = str(rows[0].get("statement_text", "") or "")
+            if feature_pattern.search(sample) and str(rows[0].get("statement_type", "") or "").upper() == "SELECT":
+                tbl_match = re.search(r"FROM\s+([\w.]+)", sample, re.IGNORECASE)
+                tbl = tbl_match.group(1) if tbl_match else fp[:32]
+                for r in rows:
+                    ms = r.get("total_time_ms", 0) or 0
+                    by_table_latency[tbl].append(float(ms))
+        for tbl, latencies in by_table_latency.items():
+            if len(latencies) < 100:
+                continue
+            sorted_lat = sorted(latencies)
+            p99 = sorted_lat[int(len(sorted_lat) * 0.99)]
+            if p99 > 50:
+                findings.append(MisuseFinding(
+                    finding_type=FINDING_FEATURE_STORE_LATENCY,
+                    severity="high",
+                    affected_object=tbl,
+                    description=f"Feature table '{tbl}' P99 latency exceeds 50ms — breaks ML inference SLA.",
+                    evidence=f"p99_ms={p99:.0f}, query_count={len(latencies)}",
+                    recommendation=(
+                        "Lakebase Pro warehouse + bloom filter for sub-ms indexed feature lookups; "
+                        "keep Delta as source of truth for feature computation."
+                    ),
+                    estimated_monthly_savings_dbu=0.0,
+                ))
+
+        # ── Anti-Pattern 05: High-Concurrency Reading ───────────────────────────
+        by_hour_table: dict[str, dict[str, set]] = defaultdict(lambda: defaultdict(set))
+        for fp, rows in by_fingerprint.items():
+            sample = str(rows[0].get("statement_text", "") or "")
+            tbl_match = re.search(r"FROM\s+([\w.]+)", sample, re.IGNORECASE)
+            tbl = tbl_match.group(1) if tbl_match else ""
+            if not tbl:
+                continue
+            for r in rows:
+                try:
+                    dt = datetime.fromisoformat(str(r.get("start_time", "")).replace("Z", "+00:00"))
+                    hour_key = dt.strftime("%Y-%m-%dT%H")
+                    session = str(r.get("session_id", "") or fp)
+                    by_hour_table[hour_key][tbl].add(session)
+                except (ValueError, TypeError):
+                    pass
+        for hour_key, table_sessions in by_hour_table.items():
+            for tbl, sessions in table_sessions.items():
+                if len(sessions) > 100:
+                    findings.append(MisuseFinding(
+                        finding_type=FINDING_HIGH_CONCURRENCY_COST,
+                        severity="medium",
+                        affected_object=tbl,
+                        description=f"100+ concurrent sessions querying '{tbl}' within a 1-hour window.",
+                        evidence=f"hour={hour_key}, concurrent_sessions={len(sessions)}",
+                        recommendation=(
+                            "Lakebase with result cache; or Postgres which handles high concurrency "
+                            "natively without per-cluster scaling cost."
+                        ),
+                        estimated_monthly_savings_dbu=len(sessions) * 0.01,
+                    ))
+
+        # ── Anti-Pattern 06: Caching Layer Bypass ──────────────────────────────
+        if caching_layers:
+            # Build cache candidates from query fingerprints
+            cache_candidate_fps = [
+                fp for fp, rows in by_fingerprint.items()
+                if len(rows) > 20 and all(not r.get("from_result_cache") for r in rows)
+            ]
+            if cache_candidate_fps:
+                findings.append(MisuseFinding(
+                    finding_type=FINDING_CACHING_LAYER_BYPASS,
+                    severity="medium",
+                    affected_object=", ".join(caching_layers),
+                    description=(
+                        f"Customer has {', '.join(caching_layers)} alongside Databricks; "
+                        f"{len(cache_candidate_fps)} queries in Delta are also cache candidates — redundant infra."
+                    ),
+                    evidence=(
+                        f"interview_inputs.caching_layers={caching_layers}, "
+                        f"cache_candidate_query_count={len(cache_candidate_fps)}"
+                    ),
+                    recommendation=(
+                        "Lakebase eliminates the cache layer — built-in result cache + Pro warehouse "
+                        "handles the low-latency reads that Redis was covering."
+                    ),
+                    estimated_monthly_savings_dbu=0.0,
+                ))
+
+        job_timeline = self.fetch_job_timeline()
 
         return DatabricksMisuseFindings(
             platform="databricks",
             findings=findings,
-            cache_candidate_queries=sum(1 for f in findings if f.finding_type == "Cache candidate"),
-            over_provisioned_warehouses=sum(1 for f in findings if f.finding_type == "Warehouse misconfigured"),
-            point_lookup_on_large_delta_count=sum(1 for f in findings if f.finding_type == "Table too large for point lookup"),
+            cache_candidate_queries=sum(1 for f in findings if f.finding_type == FINDING_HIGH_FREQ_POINT_LOOKUP),
+            over_provisioned_warehouses=sum(
+                1 for f in findings if f.finding_type == FINDING_APP_BACKEND_ON_DELTA
+            ),
+            point_lookup_on_large_delta_count=sum(
+                1 for f in findings if f.finding_type == FINDING_HIGH_FREQ_POINT_LOOKUP
+            ),
             total_estimated_wasted_dbu_monthly=sum(f.estimated_monthly_savings_dbu for f in findings),
+            job_timeline=job_timeline,
+        )
+
+    def fetch_job_timeline(self) -> JobRunTimeline:
+        """Fetch system.lakeflow.job_run_timeline (DBX Runtime 13+)."""
+        import requests
+
+        host = self._kwargs.get("databricks_host", "")
+        token = self._kwargs.get("databricks_token", "")
+        warehouse_id = self._kwargs.get("databricks_warehouse_id")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        sql = """
+        SELECT
+            job_id, job_name, run_id, state, start_time, end_time,
+            DATEDIFF(SECOND, start_time, end_time) AS duration_seconds,
+            trigger_type, cluster_type,
+            tasks_succeeded, tasks_failed
+        FROM system.lakeflow.job_run_timeline
+        WHERE start_time >= CURRENT_TIMESTAMP - INTERVAL 30 DAYS
+        ORDER BY start_time DESC
+        """
+        rows_data = self._run_sql(host, token, warehouse_id, sql, headers)
+
+        if not rows_data:
+            return JobRunTimeline(platform="databricks")
+
+        from collections import defaultdict
+        by_job: dict[str, list[dict]] = defaultdict(list)
+        for row in rows_data:
+            rd = dict(zip(
+                ["job_id", "job_name", "run_id", "state", "start_time", "end_time",
+                 "duration_seconds", "trigger_type", "cluster_type",
+                 "tasks_succeeded", "tasks_failed"],
+                row,
+            ))
+            by_job[str(rd.get("job_id", ""))].append(rd)
+
+        jobs: list[JobRunRecord] = []
+        for job_id, runs in by_job.items():
+            job_name = str(runs[0].get("job_name", job_id) or job_id)
+            durations = [float(r.get("duration_seconds", 0) or 0) for r in runs]
+            avg_dur = sum(durations) / max(len(durations), 1)
+            runs_per_day = len(runs) / 30.0
+            trigger = str(runs[0].get("trigger_type", "MANUAL") or "MANUAL")
+            cluster = str(runs[0].get("cluster_type", "NEW_CLUSTER") or "NEW_CLUSTER")
+            failed = sum(1 for r in runs if str(r.get("state", "")).upper() in ("FAILED", "ERROR"))
+            failure_rate = failed / max(len(runs), 1)
+            jobs.append(JobRunRecord(
+                job_name=job_name,
+                avg_duration_seconds=avg_dur,
+                runs_per_day=runs_per_day,
+                trigger_type=trigger,
+                cluster_type=cluster,
+                tables_written=[],
+                failure_rate=failure_rate,
+            ))
+
+        always_on = sum(
+            1 for j in jobs
+            if j.cluster_type == "EXISTING_CLUSTER" and j.runs_per_day < 2
+        )
+        over_prov = sum(1 for j in jobs if j.runs_per_day < 2 and j.avg_duration_seconds > 3600)
+        high_fail = sum(1 for j in jobs if j.failure_rate > 0.1)
+
+        return JobRunTimeline(
+            platform="databricks",
+            jobs=jobs,
+            always_on_cluster_jobs=always_on,
+            over_provisioned_jobs=over_prov,
+            high_failure_rate_jobs=high_fail,
         )
 
     # -- cost signals -- #
@@ -496,14 +692,42 @@ class DatabricksConnector(AbstractBaseConnector):
     # -- security -- #
 
     def fetch_security_patterns(self) -> SecurityPatterns:
+        host = self._kwargs.get("databricks_host", "")
+        token = self._kwargs.get("databricks_token", "")
+        warehouse_id = self._kwargs.get("databricks_warehouse_id")
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+
+        findings = [
+            SecurityFinding(
+                category="COMPLIANCE", severity="low",
+                description="Databricks has SOC2, HIPAA, PCI-DSS compliance.",
+            ),
+        ]
+
+        # Count active users (item 7f)
+        active_users = 0
+        active_sa = 0
+        try:
+            from_date = (datetime.now() - timedelta(days=min(self.query_history_days, 30))).isoformat()
+            rows_data = self._run_sql(
+                host, token, warehouse_id,
+                f"SELECT DISTINCT executed_as_user_name FROM system.query.history WHERE start_time >= TIMESTAMP '{from_date}'",
+                headers,
+            )
+            for (user,) in rows_data:
+                user = str(user or "")
+                if not user:
+                    continue
+                if any(p in user.lower() for p in ("sa_", "_svc", "robot", "service_acct")):
+                    active_sa += 1
+                else:
+                    active_users += 1
+        except Exception:
+            pass
+
         return SecurityPatterns(
             platform="databricks",
-            findings=[
-                SecurityFinding(
-                    category="COMPLIANCE", severity="low",
-                    description="Databricks has SOC2, HIPAA, PCI-DSS compliance.",
-                ),
-            ],
+            findings=findings,
             rbac_enabled=True,
             encryption_at_rest=True,
             encryption_in_transit=True,
@@ -512,9 +736,59 @@ class DatabricksConnector(AbstractBaseConnector):
             total_findings=1,
             high_severity_count=0,
             critical_severity_count=0,
+            active_users_last_30d=active_users,
+            active_service_accounts_last_30d=active_sa,
         )
 
     # -- helpers -- #
+
+    @staticmethod
+    def _run_sql(
+        host: str,
+        token: str,
+        warehouse_id: str | None,
+        sql: str,
+        headers: dict,
+    ) -> list[list]:
+        """Execute SQL via Databricks SQL Statements API; poll until complete. Returns rows."""
+        import requests
+        import time
+
+        payload: dict = {"statement": sql, "timeout_seconds": 60}
+        if warehouse_id:
+            payload["warehouse_id"] = warehouse_id
+
+        resp = requests.post(
+            f"https://{host}/api/2.1/sql/statements",
+            headers=headers,
+            json=payload,
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            return []
+
+        result = resp.json()
+        state = result.get("status", {}).get("state", "PENDING")
+        stmt_id = result.get("statement_id", "")
+
+        for _ in range(60):
+            if state in ("SUCCEEDED", "FAILED", "CANCELED"):
+                break
+            time.sleep(1)
+            poll = requests.get(
+                f"https://{host}/api/2.1/sql/statements/{stmt_id}",
+                headers=headers,
+                timeout=15,
+            )
+            if poll.status_code == 200:
+                result = poll.json()
+                state = result.get("status", {}).get("state", "PENDING")
+
+        if state != "SUCCEEDED":
+            return []
+
+        chunks = result.get("result", {}).get("data_array", [])
+        return chunks if chunks else []
 
     @staticmethod
     def _classify_databricks_query(q: str) -> str:

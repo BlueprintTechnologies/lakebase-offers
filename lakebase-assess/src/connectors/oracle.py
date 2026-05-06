@@ -1,7 +1,9 @@
 """Oracle connector - read-only query history and metadata."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
+
+_STALE_DAYS = 30
 from typing import Any
 
 from src.connectors.base import AbstractBaseConnector
@@ -188,7 +190,7 @@ class OracleConnector(AbstractBaseConnector):
                 storage_size_bytes=self._safe_int(rd.get("size_mb")) and rd.get("size_mb") * 1024 * 1024,
                 is_partitioned=str(rd.get("partitioned", "")).upper() == "YES",
                 last_analyzed=rd.get("last_analyzed"),
-                is_stale_stats=not bool(rd.get("last_analyzed")),
+                is_stale_stats=AbstractBaseConnector._is_stats_stale(rd.get("last_analyzed")),
                 is_sensitive="pii" in str(rd.get("table_name", "")).lower(),
             )
             tables.append(t)

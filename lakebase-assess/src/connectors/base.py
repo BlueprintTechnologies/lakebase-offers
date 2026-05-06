@@ -135,6 +135,21 @@ class AbstractBaseConnector(abc.ABC):
         except (TypeError, ValueError):
             return default
 
+    _STALE_STATS_DAYS = 30
+
+    @staticmethod
+    def _is_stats_stale(last_analyzed: Any) -> bool:
+        """Return True if last_analyzed is > 30 days ago. False if never analyzed or recent."""
+        from datetime import datetime, timedelta
+
+        if last_analyzed is None:
+            return False
+        try:
+            dt = last_analyzed if isinstance(last_analyzed, datetime) else datetime.fromisoformat(str(last_analyzed))
+            return (datetime.now() - dt) > timedelta(days=30)
+        except (ValueError, TypeError):
+            return False
+
     @staticmethod
     def _safe_float(val: Any, default: float | None = None) -> float | None:
         try:

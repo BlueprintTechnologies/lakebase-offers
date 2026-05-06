@@ -1,7 +1,7 @@
 """BigQuery connector - read-only query history and metadata."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from src.connectors.base import AbstractBaseConnector
@@ -179,7 +179,8 @@ class BigQueryConnector(AbstractBaseConnector):
                     partition_column=tbl_ref.time_partitioning.field if tbl_ref.time_partitioning else None,
                     column_count=len(tbl_ref.schema) if tbl_ref.schema else 0,
                     last_analyzed=datetime.fromtimestamp(tbl_ref.modified.timestamp()) if tbl_ref.modified else None,
-                    is_stale_stats=False,
+                    is_stale_stats=(tbl_ref.modified
+                                  and (datetime.now() - tbl_ref.modified) > timedelta(days=30)),
                     is_sensitive="pii" in tbl.table_id.lower() or "sensitive" in tbl.table_id.lower(),
                 )
                 tables.append(t)
