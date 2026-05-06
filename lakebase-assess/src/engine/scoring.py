@@ -22,6 +22,22 @@ class WorkloadScore:
     classification: str
     recommendation: str
     priority: str  # "Priority_1" | "Evaluate" | "Hold"
+    effort_tshirt_size: str = "M"  # XS | S | M | L | XL | XXL
+
+
+@dataclass
+class LakbaseReadinessScore:
+    """5-pillar readiness framework — 100 points, 4 tiers."""
+
+    data_readiness_score: int       # 0-25
+    sql_compatibility_score: int    # 0-25
+    access_governance_score: int    # 0-20
+    cost_business_case_score: int   # 0-15
+    org_readiness_score: int        # 0-15
+    total_score: int
+    tier: str  # "Launch-Ready" | "Conditionally Ready" | "Foundation Needed" | "Strategic Roadmap"
+    pillar_gaps: list[str]
+    recommended_next_step: str
 
 
 @dataclass
@@ -46,15 +62,18 @@ class ScoreEngine:
         Score = ((Pain × Business_Impact) / Complexity) × 10
         Adjusted_Score = Score × (1 + (est_savings_pct / 100))
 
-    Thresholds:
-        < 10:  Hold. Optimize first.
-        10-20: Evaluate. Safe for PoC.
-        >= 25: Priority 1. High confidence migration.
+    Thresholds (GTM spec, all dimensions 1-5):
+        >= 15: Priority 1. High confidence migration.
+        8-14:  Evaluate. Safe for PoC.
+        < 8:   Hold. Optimize first.
     """
+
+    PRIORITY_1_THRESHOLD = 15.0
+    EVALUATE_THRESHOLD = 8.0
 
     def __init__(
         self,
-        threshold: float = 10.0,
+        threshold: float = 8.0,
         savings_pct: float = 0.0,
     ) -> None:
         self.threshold = threshold
@@ -94,8 +113,8 @@ class ScoreEngine:
         # Recommendation
         recommendation = self._recommendation(adjusted_score, classification)
 
-        # Priority
-        if adjusted_score >= 25:
+        # Priority (GTM spec: >= 15 = Priority 1, >= 8 = Evaluate, < 8 = Hold)
+        if adjusted_score >= self.PRIORITY_1_THRESHOLD:
             priority = "Priority_1"
         elif adjusted_score >= self.threshold:
             priority = "Evaluate"
@@ -103,6 +122,7 @@ class ScoreEngine:
             priority = "Hold"
 
         identifier = query.query_id or f"workload_{hash(query.query_text_fingerprint) % 10**6}"
+        tshirt = self._compute_tshirt_size(complexity, classification, payload)
 
         return WorkloadScore(
             identifier=identifier,
@@ -114,6 +134,7 @@ class ScoreEngine:
             classification=classification,
             recommendation=recommendation,
             priority=priority,
+            effort_tshirt_size=tshirt,
         )
 
     def _score_platform(self, payload: AssessmentPayload) -> WorkloadScore:
@@ -163,12 +184,14 @@ class ScoreEngine:
         classification = "Analytics"
         recommendation = self._recommendation(adjusted_score, classification)
 
-        if adjusted_score >= 25:
+        if adjusted_score >= self.PRIORITY_1_THRESHOLD:
             priority = "Priority_1"
         elif adjusted_score >= self.threshold:
             priority = "Evaluate"
         else:
             priority = "Hold"
+
+        tshirt = self._compute_tshirt_size(comp, classification, payload)
 
         return WorkloadScore(
             identifier=f"platform_{payload.platform}",
@@ -180,6 +203,7 @@ class ScoreEngine:
             classification=classification,
             recommendation=recommendation,
             priority=priority,
+            effort_tshirt_size=tshirt,
         )
 
     # -- sub-scorers (1-5 scale) -- #
@@ -299,9 +323,9 @@ class ScoreEngine:
         if classification == "Real-time Join/Agg":
             return f"Score: {score:.1f}. Lakebase + caching layer recommended for real-time query patterns."
         if classification == "Analytics":
-            if score >= 25:
+            if score >= ScoreEngine.PRIORITY_1_THRESHOLD:
                 return f"Score: {score:.1f}. Priority 1 migration target. High confidence for Lakebase."
-            elif score >= 10:
+            elif score >= ScoreEngine.EVALUATE_THRESHOLD:
                 return f"Score: {score:.1f}. Evaluate for PoC. Low-risk migration candidate."
             else:
                 return f"Score: {score:.1f}. Hold. Optimize in current platform first."
@@ -314,6 +338,157 @@ class ScoreEngine:
         if classification == "Feature Serving":
             return f"Score: {score:.1f}. Migrate to Lakebase for feature serving."
         return f"Score: {score:.1f}. Evaluate based on migration bucket analysis."
+
+    @staticmethod
+    def _compute_tshirt_size(complexity: int, classification: str, payload: AssessmentPayload) -> str:
+        """Derive effort T-shirt size from MigrationComplexitySignals and workload classification."""
+        mc = payload.migration_complexity
+        weeks = 4.0  # default M
+
+        if mc:
+            weeks = mc.estimated_migration_weeks
+        else:
+            # Heuristic from complexity score + classification
+            base = {1: 2.0, 2: 3.0, 3: 5.0, 4: 8.0, 5: 12.0}
+            weeks = base.get(complexity, 5.0)
+            if classification in ("Real-time Join/Agg", "Feature Serving"):
+                weeks *= 1.5
+            elif classification == "Heavy ETL/UDF":
+                weeks *= 2.0
+
+        if weeks <= 2:
+            return "XS"
+        if weeks <= 4:
+            return "S"
+        if weeks <= 6:
+            return "M"
+        if weeks <= 10:
+            return "L"
+        if weeks <= 16:
+            return "XL"
+        return "XXL"
+
+    def score_readiness(self, payload: AssessmentPayload) -> "LakbaseReadinessScore":
+        """Compute the 5-pillar Lakebase Readiness Score (100 points)."""
+        gaps: list[str] = []
+
+        # Pillar 1: Data Readiness (0-25)
+        data = 0
+        tm = payload.table_metadata
+        if tm and tm.total_tables_fetched > 0:
+            data += 10
+        mc = payload.migration_complexity
+        if mc:
+            if not mc.has_unsupported_types:
+                data += 5
+            if mc.stored_proc_count == 0:
+                data += 5
+            if mc.udf_count == 0 or all(u.is_portable for u in mc.udf_records):
+                data += 5
+        else:
+            data += 10  # assume OK when no signals
+        data = min(data, 25)
+        if data < 15:
+            gaps.append("Data Readiness")
+
+        # Pillar 2: SQL Compatibility (0-25)
+        sql = 0
+        sp = payload.security_patterns
+        if sp:
+            critical = sp.critical_severity_count if hasattr(sp, "critical_severity_count") else 0
+            high = sp.high_severity_count if hasattr(sp, "high_severity_count") else 0
+            if critical == 0:
+                sql += 15
+            elif critical <= 2:
+                sql += 8
+            if high <= 3:
+                sql += 10
+            elif high <= 8:
+                sql += 5
+        else:
+            sql = 20  # assume OK when no signals
+        sql = min(sql, 25)
+        if sql < 15:
+            gaps.append("SQL Compatibility")
+
+        # Pillar 3: Access Control & Governance (0-20)
+        gov = 0
+        if sp:
+            if sp.rbac_enabled:
+                gov += 5
+            if sp.encryption_at_rest:
+                gov += 5
+            if sp.encryption_in_transit:
+                gov += 5
+            if sp.audit_logging_enabled:
+                gov += 5
+        else:
+            gov = 15
+        gov = min(gov, 20)
+        if gov < 12:
+            gaps.append("Access Control & Governance")
+
+        # Pillar 4: Cost & Business Case (0-15)
+        cost_score = 0
+        cs = payload.cost_signals
+        if cs:
+            if cs.total_estimated_monthly_cost > 0:
+                cost_score += 8  # cost data available
+            if cs.total_estimated_monthly_cost > 5000:
+                cost_score += 4  # meaningful savings potential
+        contract_months = payload.contract_renewal_months
+        if contract_months is not None and contract_months <= 6:
+            cost_score += 3  # renewal pressure
+        cost_score = min(cost_score, 15)
+        if cost_score < 9:
+            gaps.append("Cost & Business Case")
+
+        # Pillar 5: Org Readiness (0-15) — driven by interview_inputs when present
+        org = 0
+        ii = getattr(payload, "interview_inputs", {}) or {}
+        skill = ii.get("team_sql_skill", "")
+        if skill == "expert":
+            org += 10
+        elif skill == "intermediate":
+            org += 7
+        elif skill == "beginner":
+            org += 3
+        else:
+            org += 5  # unknown — partial credit
+        if ii.get("customer_pain_summary"):
+            org += 3  # exec sponsor / pain articulated
+        if ii.get("contract_renewal_months") or contract_months:
+            org += 2
+        org = min(org, 15)
+        if org < 9:
+            gaps.append("Org Readiness")
+
+        total = data + sql + gov + cost_score + org
+
+        if total >= 80:
+            tier = "Launch-Ready"
+            next_step = "Begin Phase 2 migration within 30 days. FastTrack eligible."
+        elif total >= 60:
+            tier = "Conditionally Ready"
+            next_step = f"4-6 week sprint to close gaps in: {', '.join(gaps) or 'none'}. Then proceed."
+        elif total >= 40:
+            tier = "Foundation Needed"
+            next_step = "8-12 week trust-foundations engagement before migration."
+        else:
+            tier = "Strategic Roadmap"
+            next_step = "Broader lakehouse work required. BPCS 6-12 month roadmap."
+
+        return LakbaseReadinessScore(
+            data_readiness_score=data,
+            sql_compatibility_score=sql,
+            access_governance_score=gov,
+            cost_business_case_score=cost_score,
+            org_readiness_score=org,
+            total_score=total,
+            tier=tier,
+            pillar_gaps=gaps,
+            recommended_next_step=next_step,
+        )
 
     def compute_summary(self, scores: list[WorkloadScore]) -> ScoreSummary:
         """Compute an aggregated summary from a list of scores."""
