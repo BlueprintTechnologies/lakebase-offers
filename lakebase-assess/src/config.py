@@ -52,6 +52,8 @@ class AssessmentConfig:
         dbu_mapping_path: str | None = None,
         output_formats: list[str] | None = None,
         raw_env: dict[str, str] | None = None,
+        interview_inputs: dict[str, Any] | None = None,
+        workload_context: dict[str, Any] | None = None,
     ) -> None:
         self.target_platforms = target_platforms
         self.query_history_days = query_history_days
@@ -59,6 +61,8 @@ class AssessmentConfig:
         self.dbu_mapping_path = dbu_mapping_path or str(self.DEFAULT_DBU_MAP)
         self.output_formats = output_formats or self.DEFAULT_OUTPUT_FORMATS
         self.raw_env = raw_env or dict(os.environ)
+        self.interview_inputs: dict[str, Any] = interview_inputs or {}
+        self.workload_context: dict[str, Any] = workload_context or {}
         self._pricing_map: dict[str, Any] | None = None
 
     # -- pricing -- #
@@ -163,6 +167,18 @@ def load_config(config_path: str | None = None) -> AssessmentConfig:
     if not target_platforms:
         raise ValueError("Config must specify 'target_platforms'.")
 
+    ii = data.get("interview_inputs", {}) or {}
+    if ii and not ii.get("contract_renewal_months") and data.get("workload_context", {}).get("contract_renewal_months"):
+        ii["contract_renewal_months"] = data["workload_context"]["contract_renewal_months"]
+
+    if ii:
+        import sys
+        print(  # noqa: T201
+            "NOTE: interview_inputs loaded from config. "
+            "Populate all fields before running for best accuracy.",
+            file=sys.stderr,
+        )
+
     return AssessmentConfig(
         target_platforms=target_platforms,
         query_history_days=data.get("query_history_days", AssessmentConfig.DEFAULT_QUERY_HISTORY_DAYS),
@@ -170,6 +186,8 @@ def load_config(config_path: str | None = None) -> AssessmentConfig:
         dbu_mapping_path=data.get("dbu_mapping_path"),
         output_formats=data.get("output_formats"),
         raw_env=data.get("env_overrides", {}),
+        interview_inputs=ii,
+        workload_context=data.get("workload_context", {}),
     )
 
 

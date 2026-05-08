@@ -1,0 +1,62 @@
+# lakebase-assess configuration
+# Run with: lakebase-assess --config config.yaml
+
+target_platforms:
+  - snowflake
+  - redshift
+  - bigquery
+  - mysql          # new — item 8.1 / §10
+  - databricks     # new — item 8.4 / §10
+
+query_history_days: 90
+output_formats:
+  - pdf
+  - html
+  - json
+  - csv
+
+# --- Source connectors --- #
+
+sources:
+  - type: mysql
+    host: db.internal
+    port: 3306
+    user: assessor
+    password: "{{ env.MYSQL_PASSWORD }}"
+    database: production
+
+  - type: databricks
+    host: adb-xxxx.azuredatabricks.net
+    token: "{{ env.DBX_TOKEN }}"
+    warehouse_id: abc123      # optional — needed for SQL query API
+
+# --- Workload context (item 7b, 7e, 7f) --- #
+
+workload_context:
+  contract_renewal_months: 8
+  has_pending_license_increase: false
+  has_multi_region: false
+  has_dr_requirement: true
+  rto_minutes: 60
+  is_regulated: false        # HIPAA / PCI / SOC2
+
+# --- Architecture Interview inputs (item 12) --- #
+
+interview_inputs:
+  caching_layers:
+    - redis
+    - materialized_views
+  app_access_patterns:
+    uses_orm: true
+    uses_connection_pool: true
+    has_read_replicas: true
+  ai_agent_workloads: false
+  customer_pain_summary: "Dashboard queries timing out daily; Snowflake bill doubled in 6 months"
+  contract_renewal_months: 5
+  team_sql_skill: intermediate   # beginner | intermediate | expert
+  has_dr_requirement: true
+  rto_minutes: 60
+  is_regulated: true             # HIPAA/PCI/SOC2
+  current_monitoring:
+    - datadog
+    - pagerduty
