@@ -140,12 +140,15 @@ class AbstractBaseConnector(abc.ABC):
     @staticmethod
     def _is_stats_stale(last_analyzed: Any) -> bool:
         """Return True if last_analyzed is > 30 days ago. False if never analyzed or recent."""
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
 
         if last_analyzed is None:
             return False
         try:
             dt = last_analyzed if isinstance(last_analyzed, datetime) else datetime.fromisoformat(str(last_analyzed))
+            # Strip tzinfo for comparison to avoid aware vs naive issues
+            if dt.tzinfo is not None:
+                dt = dt.replace(tzinfo=None)
             return (datetime.now() - dt) > timedelta(days=30)
         except (ValueError, TypeError):
             return False

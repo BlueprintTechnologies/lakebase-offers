@@ -179,8 +179,7 @@ class BigQueryConnector(AbstractBaseConnector):
                     partition_column=tbl_ref.time_partitioning.field if tbl_ref.time_partitioning else None,
                     column_count=len(tbl_ref.schema) if tbl_ref.schema else 0,
                     last_analyzed=datetime.fromtimestamp(tbl_ref.modified.timestamp()) if tbl_ref.modified else None,
-                    is_stale_stats=(tbl_ref.modified
-                                  and (datetime.now() - tbl_ref.modified) > timedelta(days=30)),
+                    is_stale_stats=AbstractBaseConnector._is_stats_stale(tbl_ref.modified),
                     is_sensitive="pii" in tbl.table_id.lower() or "sensitive" in tbl.table_id.lower(),
                 )
                 tables.append(t)

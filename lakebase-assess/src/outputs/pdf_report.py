@@ -10,15 +10,36 @@ logger = logging.getLogger(__name__)
 class PdfReportGenerator:
     """Generate executive PDF brief from assessment results."""
 
+    ANTI_PATTERN_LABELS = [
+        "High-Freq\nPoint Lookups",
+        "Agent State\nStorage",
+        "App Backend\non Delta",
+        "Feature Store\nLatency",
+        "High\nConcurrency",
+        "Cache Layer\nBypass",
+    ]
+    ANTI_PATTERN_TYPES = [
+        "HIGH_FREQ_POINT_LOOKUP",
+        "AGENT_STATE_DELTA_MISUSE",
+        "APP_BACKEND_ON_DELTA",
+        "FEATURE_STORE_LATENCY",
+        "HIGH_CONCURRENCY_COST",
+        "CACHING_LAYER_BYPASS",
+    ]
+
     def __init__(
         self,
         scores: dict[str, list[Any]],
         cost_deltas: dict[str, dict[str, Any]],
         buckets: dict[str, list[dict[str, Any]]],
+        misuse_findings: dict[str, Any] | None = None,
+        readiness_scores: dict[str, Any] | None = None,
     ) -> None:
         self.scores = scores
         self.cost_deltas = cost_deltas
         self.buckets = buckets
+        self.misuse_findings = misuse_findings or {}
+        self.readiness_scores = readiness_scores or {}
 
     def generate(self, output_path: str) -> str:
         """Generate the executive PDF report."""
@@ -165,9 +186,256 @@ class PdfReportGenerator:
                 elements.append(Paragraph(f"&bull; {ident} (score: {sc:.1f})", styles["Normal"]))
             elements.append(Spacer(1, 6))
 
+        # §17 canonical report sections
+        self._build_access_pattern_section(elements, styles)
+        self._build_fit_scorecard_section(elements, styles)
+        self._build_migration_roadmap_section(elements, styles)
+
         # Build PDF
         doc.build(elements)
         return output_path
+
+    # ── §17 canonical report sections ──────────────────────────────────────────
+
+    def _build_access_pattern_section(self, elements: list, styles: Any) -> None:
+        """§17 Access Pattern Report: anti-pattern heat map + top 5 candidates."""
+        from reportlab.lib.colors import HexColor, white, grey
+        from reportlab.platypus import Table, TableStyle, Paragraph, Spacer
+
+        elements.append(Paragraph("Access Pattern Report", styles["Heading2"]))
+
+        # Heat map: rows = tables (affected_object), cols = 6 anti-patterns
+        affected_objects: dict[str, dict[str, str]] = {}
+        for platform, findings_obj in self.misuse_findings.items():
+            findings = getattr(findings_obj, "findings", None) or []
+            for f in findings:
+                obj = str(getattr(f, "affected_object", "unknown"))[:30]
+                ftype = str(getattr(f, "finding_type", ""))
+                severity = str(getattr(f, "severity", "low"))
+                if obj not in affected_objects:
+                    affected_objects[obj] = {}
+                affected_objects[obj][ftype] = severity
+
+        if affected_objects:
+            header = ["Table / Object"] + self.ANTI_PATTERN_LABELS
+            heat_data: list[list] = [header]
+            for obj, pattern_map in list(affected_objects.items())[:20]:
+                row: list = [obj]
+                for pt in self.ANTI_PATTERN_TYPES:
+                    sev = pattern_map.get(pt, "")
+                    if sev == "high":
+                        row.append("HIGH")
+                    elif sev == "medium":
+                        row.append("MED")
+                    elif sev == "low":
+                        row.append("low")
+                    else:
+                        row.append("-")
+                heat_data.append(row)
+
+            col_w = [100] + [55] * 6
+            heat_table = Table(heat_data, colWidths=col_w)
+            heat_style = TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), HexColor("#1a1a2e")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 7),
+                ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+                ("GRID", (0, 0), (-1, -1), 0.5, grey),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [white, HexColor("#f8f8f8")]),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ])
+            # Colour HIGH/MED cells
+            for ri, row in enumerate(heat_data[1:], start=1):
+                for ci, cell in enumerate(row[1:], start=1):
+                    if cell == "HIGH":
+                        heat_style.add("BACKGROUND", (ci, ri), (ci, ri), HexColor("#ff4444"))
+                        heat_style.add("TEXTCOLOR", (ci, ri), (ci, ri), white)
+                    elif cell == "MED":
+                        heat_style.add("BACKGROUND", (ci, ri), (ci, ri), HexColor("#ffaa00"))
+            heat_table.setStyle(heat_style)
+            elements.append(heat_table)
+            elements.append(Spacer(1, 12))
+
+        # Top 5 candidates
+        elements.append(Paragraph("Top 5 Migration Candidates", styles["Heading3"]))
+        all_scored: list[Any] = []
+        for platform_scores in self.scores.values():
+            all_scored.extend(platform_scores)
+        top5 = sorted(all_scored, key=lambda s: getattr(s, "adjusted_score", 0), reverse=True)[:5]
+        for ws in top5:
+            ident = str(getattr(ws, "identifier", ""))[:40]
+            score = getattr(ws, "adjusted_score", 0)
+            bucket = str(getattr(ws, "classification", ""))
+            tshirt = str(getattr(ws, "effort_tshirt_size", "M"))
+            elements.append(Paragraph(
+                f"&bull; <b>{ident}</b> — Score: {score:.1f}, Bucket: {bucket}, Effort: {tshirt}",
+                styles["Normal"],
+            ))
+        elements.append(Spacer(1, 12))
+
+    def _build_fit_scorecard_section(self, elements: list, styles: Any) -> None:
+        """§17 Fit Scorecard: traffic-light by table, priority tiers, T-shirt totals."""
+        from reportlab.lib.colors import HexColor, white, grey
+        from reportlab.platypus import Table, TableStyle, Paragraph, Spacer
+
+        elements.append(Paragraph("Fit Scorecard", styles["Heading2"]))
+
+        all_scores: list[Any] = []
+        for platform_scores in self.scores.values():
+            all_scores.extend(platform_scores)
+        all_scores.sort(key=lambda s: getattr(s, "adjusted_score", 0), reverse=True)
+
+        # Traffic-light table
+        sc_data: list[list] = [["Workload", "Bucket", "Priority", "Score", "Effort"]]
+        tshirt_counter: dict[str, int] = {}
+        for ws in all_scores:
+            ident = str(getattr(ws, "identifier", ""))[:35]
+            bucket = str(getattr(ws, "classification", ""))
+            priority = str(getattr(ws, "priority", "Hold"))
+            score = getattr(ws, "adjusted_score", 0)
+            tshirt = str(getattr(ws, "effort_tshirt_size", "M"))
+            tshirt_counter[tshirt] = tshirt_counter.get(tshirt, 0) + 1
+            # Traffic light symbol (text-based)
+            light = "P1" if priority == "Priority_1" else ("EVAL" if priority == "Evaluate" else "HOLD")
+            sc_data.append([ident, bucket, light, f"{score:.1f}", tshirt])
+
+        if len(sc_data) > 1:
+            col_w = [130, 80, 40, 45, 40]
+            sc_table = Table(sc_data[:51], colWidths=col_w)  # cap at 50 rows + header
+            sc_style = TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), HexColor("#1a1a2e")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 7),
+                ("ALIGN", (2, 0), (-1, -1), "CENTER"),
+                ("GRID", (0, 0), (-1, -1), 0.5, grey),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [white, HexColor("#f8f8f8")]),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ])
+            for ri, row in enumerate(sc_data[1:], start=1):
+                if row[2] == "P1":
+                    sc_style.add("BACKGROUND", (2, ri), (2, ri), HexColor("#22aa44"))
+                    sc_style.add("TEXTCOLOR", (2, ri), (2, ri), white)
+                elif row[2] == "EVAL":
+                    sc_style.add("BACKGROUND", (2, ri), (2, ri), HexColor("#ffaa00"))
+                else:
+                    sc_style.add("BACKGROUND", (2, ri), (2, ri), HexColor("#dd4444"))
+                    sc_style.add("TEXTCOLOR", (2, ri), (2, ri), white)
+            sc_table.setStyle(sc_style)
+            elements.append(sc_table)
+            elements.append(Spacer(1, 8))
+
+        # T-shirt summary row
+        tshirt_order = ["XS", "S", "M", "L", "XL", "XXL"]
+        tshirt_row = "  ".join(f"{s}: {tshirt_counter.get(s, 0)}" for s in tshirt_order)
+        elements.append(Paragraph(f"Effort summary — {tshirt_row}", styles["Normal"]))
+        elements.append(Spacer(1, 12))
+
+        # Readiness scores
+        if self.readiness_scores:
+            elements.append(Paragraph("Lakebase Readiness Score", styles["Heading3"]))
+            for platform, rs in self.readiness_scores.items():
+                total = getattr(rs, "total_score", 0)
+                tier = str(getattr(rs, "tier", ""))
+                gaps = getattr(rs, "pillar_gaps", [])
+                next_step = str(getattr(rs, "recommended_next_step", ""))
+                d = getattr(rs, "data_readiness_score", 0)
+                s = getattr(rs, "sql_compatibility_score", 0)
+                g = getattr(rs, "access_governance_score", 0)
+                c = getattr(rs, "cost_business_case_score", 0)
+                o = getattr(rs, "org_readiness_score", 0)
+                elements.append(Paragraph(
+                    f"<b>{platform}</b> — Total: {total}/100 ({tier})",
+                    styles["Normal"],
+                ))
+                elements.append(Paragraph(
+                    f"Data:{d}/25  SQL:{s}/25  Gov:{g}/20  Cost:{c}/15  Org:{o}/15",
+                    styles["Normal"],
+                ))
+                if gaps:
+                    elements.append(Paragraph(f"Gaps: {', '.join(gaps)}", styles["Normal"]))
+                elements.append(Paragraph(f"Next step: {next_step}", styles["Normal"]))
+                elements.append(Spacer(1, 6))
+
+    def _build_migration_roadmap_section(self, elements: list, styles: Any) -> None:
+        """§17 Migration Roadmap: top 3 architectures + cost savings + 30/60/90 plan."""
+        from reportlab.lib.colors import HexColor, white, grey
+        from reportlab.platypus import Table, TableStyle, Paragraph, Spacer
+
+        elements.append(Paragraph("Migration Roadmap", styles["Heading2"]))
+
+        # Top 3 architectures
+        all_scores: list[Any] = []
+        for platform_scores in self.scores.values():
+            all_scores.extend(platform_scores)
+        all_scores.sort(key=lambda s: getattr(s, "adjusted_score", 0), reverse=True)
+        top3 = all_scores[:3]
+
+        elements.append(Paragraph("Top 3 Target Architectures", styles["Heading3"]))
+        for i, ws in enumerate(top3, 1):
+            ident = str(getattr(ws, "identifier", ""))[:40]
+            bucket = str(getattr(ws, "classification", "Analytics"))
+            score = getattr(ws, "adjusted_score", 0)
+            tshirt = str(getattr(ws, "effort_tshirt_size", "M"))
+            recommendation = str(getattr(ws, "recommendation", ""))
+            elements.append(Paragraph(
+                f"<b>#{i}: {ident}</b> — {bucket} (Score: {score:.1f}, Effort: {tshirt})",
+                styles["Normal"],
+            ))
+            elements.append(Paragraph(recommendation, styles["Normal"]))
+            elements.append(Spacer(1, 4))
+
+        # Cost savings table
+        elements.append(Paragraph("Cost Savings Projection", styles["Heading3"]))
+        cost_data: list[list] = [
+            ["Platform", "Current $/mo", "Projected $/mo", "Monthly Savings", "Payback (mo)"]
+        ]
+        for platform, delta in self.cost_deltas.items():
+            current = delta.get("current_estimated_monthly_cost", 0)
+            projected = delta.get("projected_lakebase_cost", 0)
+            savings = current - projected
+            payback = round(projected / max(savings, 1), 1) if savings > 0 else "N/A"
+            cost_data.append([
+                delta.get("platform", platform),
+                f"${current:,.0f}",
+                f"${projected:,.0f}",
+                f"${savings:,.0f}",
+                str(payback),
+            ])
+        if len(cost_data) > 1:
+            cost_table = Table(cost_data, colWidths=[90, 80, 80, 80, 70])
+            cost_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), HexColor("#1a1a2e")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                ("GRID", (0, 0), (-1, -1), 0.5, grey),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [white, HexColor("#f8f8f8")]),
+            ]))
+            elements.append(cost_table)
+            elements.append(Spacer(1, 10))
+
+        # 30/60/90 day plan
+        elements.append(Paragraph("30/60/90 Day Implementation Plan", styles["Heading3"]))
+        p1_names = [
+            str(getattr(ws, "identifier", ""))[:30]
+            for ws in all_scores if getattr(ws, "priority", "") == "Priority_1"
+        ]
+        eval_names = [
+            str(getattr(ws, "identifier", ""))[:30]
+            for ws in all_scores if getattr(ws, "priority", "") == "Evaluate"
+        ]
+        day30 = ", ".join(p1_names[:3]) or "No Priority 1 workloads"
+        day60 = ", ".join(p1_names[3:6]) or "Remaining Priority 1 workloads"
+        day90 = ", ".join(eval_names[:3]) or "Evaluate workloads"
+        elements.append(Paragraph(f"<b>Days 1-30 (Wave 1):</b> {day30}", styles["Normal"]))
+        elements.append(Paragraph(f"<b>Days 31-60 (Wave 1 cont):</b> {day60}", styles["Normal"]))
+        elements.append(Paragraph(f"<b>Days 61-90 (Wave 2):</b> {day90}", styles["Normal"]))
+        elements.append(Spacer(1, 12))
 
     def generate_dashboard(self, output_path: str) -> str:
         """Generate an interactive HTML dashboard with Plotly charts."""

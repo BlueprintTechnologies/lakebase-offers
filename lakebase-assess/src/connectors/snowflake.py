@@ -195,8 +195,7 @@ class SnowflakeConnector(AbstractBaseConnector):
                 is_partitioned=False,
                 column_count=self._safe_int(rd.get("column_count", 0)),
                 last_analyzed=datetime.fromisoformat(str(rd.get("last_altered"))) if rd.get("last_altered") else None,
-                is_stale_stats=(rd.get("last_altered")
-                              and (datetime.now() - datetime.fromisoformat(str(rd["last_altered"]))) > timedelta(days=30)),
+                is_stale_stats=AbstractBaseConnector._is_stats_stale(rd.get("last_altered")),
                 is_sensitive="PII" in str(rd.get("tags", "")).upper() or "SENSITIVE" in str(rd.get("tags", "")).upper(),
             )
             tables.append(t)
