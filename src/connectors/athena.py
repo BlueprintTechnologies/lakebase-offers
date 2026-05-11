@@ -16,7 +16,7 @@ class AthenaConnector(AbstractBaseConnector):
     platform_display_name = "Amazon Athena"
 
     def __init__(self, **kwargs: Any) -> None:
-        super().__init__(platform_name="athena", **kwargs)
+        super().__init__(**kwargs)
 
     def validate_credentials(self) -> bool:
         # Athena needs a named query bucket and work group

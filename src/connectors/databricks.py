@@ -31,7 +31,7 @@ class DatabricksConnector(AbstractBaseConnector):
     platform_display_name = "Databricks"
 
     def __init__(self, **kwargs: Any) -> None:
-        super().__init__(platform_name="databricks", **kwargs)
+        super().__init__(**kwargs)
 
     # -- credentials -- #
 

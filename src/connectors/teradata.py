@@ -19,7 +19,7 @@ class TeradataConnector(AbstractBaseConnector):
     platform_display_name = "Teradata"
 
     def __init__(self, **kwargs: Any) -> None:
-        super().__init__(platform_name="teradata", **kwargs)
+        super().__init__(**kwargs)
 
     def validate_credentials(self) -> bool:
         host = self._kwargs.get("teradata_host")

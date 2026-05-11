@@ -22,7 +22,7 @@ class OnPremDumpConnector(AbstractBaseConnector):
     platform_display_name = "On-Premises (Imported Dump)"
 
     def __init__(self, **kwargs: Any) -> None:
-        super().__init__(platform_name="onprem_dump", **kwargs)
+        super().__init__(**kwargs)
         self._csv_path = self._kwargs.get("onprem_csv_path")
         self._json_path = self._kwargs.get("onprem_json_path")
         self._delimiter = self._kwargs.get("onprem_delimiter", ",")

@@ -21,7 +21,7 @@ class OracleConnector(AbstractBaseConnector):
     platform_display_name = "Oracle Database"
 
     def __init__(self, **kwargs: Any) -> None:
-        super().__init__(platform_name="oracle", **kwargs)
+        super().__init__(**kwargs)
 
     def validate_credentials(self) -> bool:
         host = self._kwargs.get("oracle_host")

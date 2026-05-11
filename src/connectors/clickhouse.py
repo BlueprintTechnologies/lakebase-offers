@@ -16,7 +16,7 @@ class ClickHouseConnector(AbstractBaseConnector):
     platform_display_name = "ClickHouse"
 
     def __init__(self, **kwargs: Any) -> None:
-        super().__init__(platform_name="clickhouse", **kwargs)
+        super().__init__(**kwargs)
 
     def validate_credentials(self) -> bool:
         # ClickHouse needs host, port, user, password (or client_id)

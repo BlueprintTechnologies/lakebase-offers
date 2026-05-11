@@ -19,7 +19,7 @@ class RedshiftConnector(AbstractBaseConnector):
     platform_display_name = "Amazon Redshift"
 
     def __init__(self, **kwargs: Any) -> None:
-        super().__init__(platform_name="redshift", **kwargs)
+        super().__init__(**kwargs)
 
     def validate_credentials(self) -> bool:
         cluster = self._kwargs.get("redshift_cluster_id")

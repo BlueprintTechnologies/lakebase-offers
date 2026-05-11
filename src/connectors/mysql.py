@@ -19,7 +19,7 @@ class MySQLConnector(AbstractBaseConnector):
     platform_display_name = "MySQL / MariaDB"
 
     def __init__(self, **kwargs: Any) -> None:
-        super().__init__(platform_name="mysql", **kwargs)
+        super().__init__(**kwargs)
 
     # -- credentials -- #
 

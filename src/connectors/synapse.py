@@ -19,7 +19,7 @@ class SynapseConnector(AbstractBaseConnector):
     platform_display_name = "Azure Synapse"
 
     def __init__(self, **kwargs: Any) -> None:
-        super().__init__(platform_name="synapse", **kwargs)
+        super().__init__(**kwargs)
 
     def validate_credentials(self) -> bool:
         server = self._kwargs.get("synapse_server")

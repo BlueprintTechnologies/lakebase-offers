@@ -19,7 +19,7 @@ class VerticaConnector(AbstractBaseConnector):
     platform_display_name = "Vertica"
 
     def __init__(self, **kwargs: Any) -> None:
-        super().__init__(platform_name="vertica", **kwargs)
+        super().__init__(**kwargs)
 
     def validate_credentials(self) -> bool:
         host = self._kwargs.get("vertica_host")

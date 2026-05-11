@@ -21,7 +21,7 @@ class SnowflakeConnector(AbstractBaseConnector):
     platform_display_name = "Snowflake"
 
     def __init__(self, **kwargs: Any) -> None:
-        super().__init__(platform_name="snowflake", **kwargs)
+        super().__init__(**kwargs)
 
     def validate_credentials(self) -> bool:
         account = self._kwargs.get("snowflake_account")

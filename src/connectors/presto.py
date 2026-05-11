@@ -16,7 +16,7 @@ class PrestoConnector(AbstractBaseConnector):
     platform_display_name = "PrestoDB"
 
     def __init__(self, **kwargs: Any) -> None:
-        super().__init__(platform_name="presto", **kwargs)
+        super().__init__(**kwargs)
 
     def validate_credentials(self) -> bool:
         # Presto needs hostname, port, user, schema

@@ -16,7 +16,7 @@ class DremioConnector(AbstractBaseConnector):
     platform_display_name = "Dremio"
 
     def __init__(self, **kwargs: Any) -> None:
-        super().__init__(platform_name="dremio", **kwargs)
+        super().__init__(**kwargs)
 
     def validate_credentials(self) -> bool:
         # Dremio needs host, user, password (or token)

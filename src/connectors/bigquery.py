@@ -19,7 +19,7 @@ class BigQueryConnector(AbstractBaseConnector):
     platform_display_name = "Google BigQuery"
 
     def __init__(self, **kwargs: Any) -> None:
-        super().__init__(platform_name="bigquery", **kwargs)
+        super().__init__(**kwargs)
 
     def validate_credentials(self) -> bool:
         project = self._kwargs.get("bq_project_id")
