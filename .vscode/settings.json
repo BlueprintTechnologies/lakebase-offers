@@ -1,10 +1,10 @@
 {
-    "python.defaultInterpreterPath": "/Users/slowder/.hermes/hermes-agent/venv/bin/python",
-    "python.testing.pytestArgs": [
-        "tests",
-        "-v"
-    ],
-    "python.testing.unittestEnabled": false,
-    "python.testing.pytestEnabled": true,
-    "python.testing.pytestRunsUnderDebugger": false
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+  "python.testing.pytestArgs": [
+    "tests",
+    "-v",
+    "--tb=short",
+    "--cache-clear"
+  ],
+  "python.testing.cwd": "${workspaceFolder}"
 }

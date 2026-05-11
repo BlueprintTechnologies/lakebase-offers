@@ -120,6 +120,7 @@ class TestGenerate:
             severity="high",
             affected_object="orders_table",
             description="High frequency lookups",
+            evidence="1,500 point lookups per hour on this table",
             recommendation="Migrate",
         )
         misuse = DatabricksMisuseFindings(platform="snowflake", findings=[finding])
