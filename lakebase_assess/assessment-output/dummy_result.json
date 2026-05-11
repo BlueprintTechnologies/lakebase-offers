@@ -1,0 +1,33 @@
+{
+  "status": "success",
+  "summary": "Demo assessment run for multiple RDBMS platforms",
+  "platforms": {
+    "sql_server_2022": {
+      "score": 38,
+      "priority": "Priority 1",
+      "reasoning": "High business impact due to mission‑critical reporting, moderate complexity, and estimated 45% cost savings."
+    },
+    "sql_server_2019": {
+      "score": 32,
+      "priority": "Priority 1",
+      "reasoning": "Significant pain points in query latency, but complexity is lower than 2022; projected savings ~38%."
+    },
+    "sql_server_2017": {
+      "score": 24,
+      "priority": "Evaluate",
+      "reasoning": "Moderate pain, higher complexity due to legacy features; savings estimated at 28%."
+    },
+    "postgres": {
+      "score": 19,
+      "priority": "Hold",
+      "reasoning": "Low complexity and modest pain; projected savings ~20%, below priority threshold."
+    }
+  },
+  "artifacts_generated": {
+    "executive_summary_pdf": "assessment-output/executive_summary.pdf",
+    "interactive_dashboard_html": "assessment-output/dashboard.html",
+    "detailed_report_json": "assessment-output/report.json",
+    "migration_checklist_md": "assessment-output/checklist.md"
+  },
+  "notes": "All artifacts are placeholders generated for demonstration purposes; real runs will produce detailed PDFs, HTML dashboards, JSON payloads, and checklists based on actual data source queries."
+}

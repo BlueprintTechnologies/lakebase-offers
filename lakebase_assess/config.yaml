@@ -1,0 +1,13 @@
+target_platforms:
+  - onprem_dump
+
+onprem_dump:
+  data_dir: ./sample_data
+
+output_formats:
+  - json
+  - csv
+  - pdf
+
+query_history_days: 30
+env_overrides: {}

@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"name": "lakebase-offers",
+			"path": ".."
+		},
+		{
+			"name": ".hermes",
+			"path": "../../../../../.hermes"
+		}
+	],
+	"settings": {}
+}
