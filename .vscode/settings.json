@@ -1,8 +1,10 @@
 {
     "python.defaultInterpreterPath": "/Users/slowder/.hermes/hermes-agent/venv/bin/python",
     "python.testing.pytestArgs": [
-        "tests"
+        "tests",
+        "-v"
     ],
     "python.testing.unittestEnabled": false,
-    "python.testing.pytestEnabled": true
+    "python.testing.pytestEnabled": true,
+    "python.testing.pytestRunsUnderDebugger": false
 }

@@ -47,4 +47,6 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
+norecursedirs = [".git", ".vscode", "src", "docs", "pricing_maps", "templates", "assessment-output"]
 addopts = "-v --tb=short"
+minversion = "7.0"
