@@ -79,11 +79,18 @@ ALTER TABLE catalog.schema.customers
 ### Create a row filter
 
 ```sql
+-- Mapping table: which regions each user may see
+-- (a table referenced by a row filter must not itself carry a row filter)
+CREATE TABLE catalog.schema.user_regions (user_email STRING, region STRING);
+
 -- Filter rows to only the user's region
 CREATE OR REPLACE FUNCTION catalog.schema.filter_by_region(region_col STRING)
   RETURNS BOOLEAN
   RETURN is_account_group_member('global-access')
-    OR current_user_region() = region_col;
+    OR EXISTS (
+      SELECT 1 FROM catalog.schema.user_regions m
+      WHERE m.user_email = session_user()
+        AND m.region = region_col);
 
 ALTER TABLE catalog.schema.sales_data
   SET ROW FILTER catalog.schema.filter_by_region ON (region);
