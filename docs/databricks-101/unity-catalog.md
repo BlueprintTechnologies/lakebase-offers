@@ -63,15 +63,25 @@ ALTER TABLE prod.sales.customers
 ### Row-level filtering
 
 ```sql
+-- A mapping table of which regions each user may see
+-- (a table referenced by a row filter must not itself carry a row filter)
+CREATE TABLE prod.security.user_regions (user_email STRING, region STRING);
+
 -- Create a row filter
-CREATE FUNCTION prod.security.region_filter(region STRING)
+CREATE FUNCTION prod.security.region_filter(region_value STRING)
   RETURNS BOOLEAN
-  RETURN is_account_group_member('global-access') OR current_user_region() = region;
+  RETURN is_account_group_member('global-access')
+    OR EXISTS (
+      SELECT 1 FROM prod.security.user_regions m
+      WHERE m.user_email = session_user()
+        AND m.region = region_value);
 
 -- Apply to a table
 ALTER TABLE prod.sales.orders
   SET ROW FILTER prod.security.region_filter ON (region);
 ```
+
+The filter keys on `session_user()` through a mapping table, the pattern Databricks documents for per-user row access ([Manually apply row filters and column masks](https://docs.databricks.com/aws/en/data-governance/unity-catalog/filters-and-masks/manually-apply)). For a rule that must hold across many tables, Databricks recommends [ABAC policies](https://docs.databricks.com/aws/en/data-governance/unity-catalog/abac/).
 
 ## Data lineage
 

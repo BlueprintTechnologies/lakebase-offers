@@ -30,20 +30,23 @@ Tables without domain tags appear as "Unassigned" in the scorecard breakdown. If
 
 ### Step 1: Define the tag keys and allowed values
 
+Governed tags are account-level objects. Create each one with `CREATE GOVERNED TAG` (requires the account-level `CREATE` privilege, which account admins and workspace admins have by default; Databricks Runtime 18.1 or above):
+
 ```sql
--- Create a governed tag (in the Unity Catalog metastore admin)
-CREATE TAG catalog_name.information_schema.domain
-  COMMENT 'Business domain that owns this data asset'
-  ALLOWED VALUES ('finance', 'sales', 'hr', 'supply-chain', 'marketing', 'platform', 'shared');
+CREATE GOVERNED TAG domain
+  DESCRIPTION 'Business domain that owns this data asset'
+  VALUES ('finance', 'sales', 'hr', 'supply-chain', 'marketing', 'platform', 'shared');
 
-CREATE TAG catalog_name.information_schema.pii
-  COMMENT 'Whether this asset contains personally identifiable information'
-  ALLOWED VALUES ('true', 'false');
+CREATE GOVERNED TAG pii
+  DESCRIPTION 'Whether this asset contains personally identifiable information'
+  VALUES ('true', 'false');
 
-CREATE TAG catalog_name.information_schema.classification
-  COMMENT 'Data sensitivity classification'
-  ALLOWED VALUES ('public', 'internal', 'confidential', 'restricted');
+CREATE GOVERNED TAG classification
+  DESCRIPTION 'Data sensitivity classification'
+  VALUES ('public', 'internal', 'confidential', 'restricted');
 ```
+
+Omit `VALUES` (or pass an empty list) to create a key-only tag. You can also create governed tags with the Databricks CLI (`databricks tag-policies create-tag-policy <key>`) or the tag policies REST API. See [Create a governed tag](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-syntax-ddl-create-governed-tag) and [Create and manage governed tags](https://docs.databricks.com/aws/en/admin/governed-tags/manage-governed-tags).
 
 ### Step 2: Apply tags to tables and schemas
 
